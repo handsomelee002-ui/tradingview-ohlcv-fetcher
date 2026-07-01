@@ -1,0 +1,21 @@
+# Ticker list — one per line, TradingView format EXCHANGE:SYMBOL.
+# Lines starting with '#' are ignored. Edit freely; this is your watchlist.
+#
+# Malaysia (Bursa Malaysia = exchange MYX).
+MYX:1155, Maybank
+MYX:1023, CIMB
+MYX:5168, Hartalega
+MYX:5296, IHH Healthcare
+MYX:6012, Maxis
+MYX:6888, Axiata
+MYX:1082, Hong Leong Bank
+MYX:4715, Genting
+MYX:3182, Genting Malaysia
+MYX:7277, Dialog Group
+#
+# United States.
+NASDAQ:AAPL, Apple
+NASDAQ:MSFT, Microsoft
+NASDAQ:NVDA, Nvidia
+NASDAQ:TSLA, Tesla
+NYSE:IBM, IBM
