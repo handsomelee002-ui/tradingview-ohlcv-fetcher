@@ -12,6 +12,9 @@ stock. Fully automatic — reads a ticker list, loops every stock, no manual ste
   exact match** across 10 KLSE stocks. The only large gaps are stocks with a
   split/bonus, where TradingView is split-adjusted and Bursa is raw (expected —
   see *Adjusted vs raw prices* below). Run `bursa_validate.py` to check yourself.
+- **Don't know which stocks to track?** `market_movers.py` pulls TradingView's
+  own top gainers/losers/volume lists per market and feeds them straight into
+  the same OHLCV fetch — see *Market movers* below.
 
 > `tvDatafeed` is an unofficial library (the *data* is official; the *access
 > method* is not). It can break if TradingView changes its backend. For
@@ -50,6 +53,7 @@ Requires Python 3.10+.
 ```powershell
 pip install pandas
 pip install --upgrade git+https://github.com/rongardF/tvdatafeed.git
+pip install requests    # only needed for market_movers.py (see below)
 ```
 
 Optional TradingView login (more stable, fewer throttles) — set env vars:
@@ -93,9 +97,9 @@ Note volume (`V`) comes back as `0` for indices, since an index itself has no
 traded volume.
 
 Any TradingView-supported exchange works. Each stock saves to a
-filesystem-safe filename (`MYX:1155` → `MYX_1155.csv`). A `sample_tickers.csv`
-is included. The validator converts `MYX:xxxx` to the Bursa stock code
-internally — you never type a `.KL`/`.MY` suffix anywhere.
+filesystem-safe filename (`MYX:1155` → `MYX_1155.csv`). The validator converts
+`MYX:xxxx` to the Bursa stock code internally — you never type a `.KL`/`.MY`
+suffix anywhere.
 
 ---
 
@@ -118,7 +122,7 @@ python ohlcv_fetcher.py
 python ohlcv_fetcher.py --tickers MYX:1155
 
 # Read a different list (txt or csv)
-python ohlcv_fetcher.py --file sample_tickers.csv
+python ohlcv_fetcher.py --file my_other_list.csv
 
 # Fewer bars (faster)
 python ohlcv_fetcher.py --bars 1000
@@ -233,13 +237,70 @@ dividends are **not** backed out of the price series.
 
 ---
 
+## Market movers (top gainers / losers / volume, by market)
+
+`market_movers.py` pulls a ranked "top N" list — gainers, losers, or most
+active by volume — for a given market from TradingView's public screener, then
+fetches OHLCV for those tickers the same way as `ohlcv_fetcher.py`. It never
+touches your `tickers.txt`-driven `data/ohlcv/` files; results land in their
+own sub-folder under `data/topx/`, overwritten fresh on each run.
+
+Needs one extra dependency on top of the main [Install](#install) steps:
+
+```powershell
+pip install requests
+```
+
+`--market` is the exact slug from a TradingView market-movers URL:
+
+```
+tradingview.com/markets/stocks-malaysia/market-movers-gainers/  -> --market malaysia
+tradingview.com/markets/stocks-germany/market-movers-volume/    -> --market germany
+tradingview.com/markets/stocks-usa/market-movers-gainers/       -> --market usa
+```
+
+```powershell
+python market_movers.py --market malaysia --list volume  --top 30
+python market_movers.py --market malaysia --list losers  --top 100
+python market_movers.py --market taiwan   --list gainers --top 50
+python market_movers.py --market usa      --list volume  --top 30
+```
+
+| Flag | Description |
+|------|-------------|
+| `--market SLUG` | TradingView URL slug, e.g. `malaysia`, `usa`, `germany`, `taiwan` |
+| `--list` | `gainers`, `losers`, or `volume` |
+| `--top N` | How many tickers to take from the ranking |
+| `--bars N` | Bars per stock (default 5000, same as `ohlcv_fetcher.py`) |
+
+Output:
+
+```
+data/topx/<market>_<list>_top<n>/_ranking.csv     the ranked list (rank, ticker, name, close, volume, change)
+data/topx/<market>_<list>_top<n>/<ticker>.csv     one OHLCV CSV per stock, same columns as data/ohlcv/
+```
+
+**Notes:**
+- Most `--market` slugs pass straight to TradingView's scanner backend
+  unchanged; a couple of known exceptions are translated internally (e.g.
+  `usa` → backend region `america`). An unrecognized slug fails with a clear
+  error rather than silently returning nothing.
+- For US stocks, OTC/pink-sheet listings are excluded by default — without
+  that filter, "gainers"/"losers" gets dominated by illiquid penny stocks with
+  meaningless swings (this matches what TradingView's own page shows).
+- Same unofficial-API caveat as `tvDatafeed`: this uses TradingView's public
+  scanner endpoint, which could change without notice.
+
+---
+
 ## Files
 
 | File | Purpose |
 |------|---------|
 | `ohlcv_fetcher.py` | The fetcher (TradingView → per-stock CSV). |
+| `market_movers.py` | Top gainers/losers/volume lists per market → OHLCV. |
 | `bursa_validate.py` | On-demand validator vs official Bursa (Playwright). |
 | `tickers.txt` | Your ticker list. |
-| `sample_tickers.csv` | Example ticker list. |
 | `data/ohlcv/` | Output: per-stock OHLCV CSVs. |
+| `data/topx/` | Output: market-movers top-N lists (ranking + OHLCV). |
 | `data/compare/` | Output: validation reports + `validation_summary.csv`. |
