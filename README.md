@@ -36,7 +36,7 @@ date,ticker,H,L,O,C,V
 | `H` | High |
 | `L` | Low |
 | `O` | Open |
-| `C` | Close (split/dividend **adjusted** — see caveats) |
+| `C` | Close (split-**adjusted**, not dividend-adjusted — see caveats) |
 | `V` | Volume |
 
 One file per stock, so models can load each independently.
@@ -83,6 +83,14 @@ NYSE:IBM, IBM
 | `MYX:1155` | Bursa Malaysia |
 | `NASDAQ:AAPL` | US (NASDAQ) |
 | `NYSE:IBM` | US (NYSE) |
+| `INDEX:KLSE` | FBM KLCI index |
+| `TWSE:IX0001` | TAIEX index |
+
+**Indices work too**, not just stocks — confirmed by testing the tickers
+above. Take the ticker straight from the TradingView symbol URL, e.g.
+`tradingview.com/symbols/INDEX-KLSE/` → `INDEX:KLSE` (dash becomes colon).
+Note volume (`V`) comes back as `0` for indices, since an index itself has no
+traded volume.
 
 Any TradingView-supported exchange works. Each stock saves to a
 filesystem-safe filename (`MYX:1155` → `MYX_1155.csv`). A `sample_tickers.csv`
@@ -197,20 +205,24 @@ Verdict per stock:
 
 ### Adjusted vs raw prices
 
-TradingView returns **split/dividend-adjusted** prices; Bursa's site returns
-**raw** traded prices. For a stock with no corporate action they match to
-~100%. For a stock that had a split/bonus, all prices *before* that event differ
-by the adjustment factor (e.g. an exact 1.5× on a 3-for-2 bonus) — the validator
-labels this `corp-action`, not an error. **Adjusted is what you want for
-backtesting / AI training** (raw has artificial jumps at split dates that
-corrupt indicators); raw is only for "what was the actual traded price".
+TradingView returns **split-adjusted** prices (confirmed from the `tvDatafeed`
+library itself, which requests `"adjustment":"splits"` — **not** dividends);
+Bursa's site returns **raw** traded prices. For a stock with no corporate
+action they match to ~100%. For a stock that had a split/bonus, all prices
+*before* that event differ by the adjustment factor (e.g. an exact 1.5× on a
+3-for-2 bonus) — the validator labels this `corp-action`, not an error.
+**Adjusted is what you want for backtesting / AI training** (raw has
+artificial jumps at split dates that corrupt indicators); raw is only for
+"what was the actual traded price". Note this is split-adjusted only —
+dividends are **not** backed out of the price series.
 
 ---
 
 ## Notes & caveats
 
-- **Adjusted prices:** the fetched data is split/dividend-adjusted (continuous
-  series, best for backtesting). See *Adjusted vs raw prices* above.
+- **Adjusted prices:** the fetched data is split-adjusted (continuous series,
+  best for backtesting) but **not** dividend-adjusted. See *Adjusted vs raw
+  prices* above.
 - **Rate limits & retries:** anonymous TradingView is throttled; a free login
   (env vars above) is steadier. There's a 1s pause between stocks and each fetch
   retries up to 3× on transient drops. Any stocks that still fail are printed in
