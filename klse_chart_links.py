@@ -288,10 +288,26 @@ def _check_attr(value: bool | None) -> str:
     return "" if value is None else ("1" if value else "0")
 
 
-def _check_cell(value: bool | None) -> str:
-    if value is None:
-        return '<td class="chk unknown">—</td>'
-    return '<td class="chk ok">&#10003;</td>' if value else '<td class="chk no">&#10007;</td>'
+# (key, data-attribute suffix, label) for the 6 conditions, in display order.
+CONDITIONS = [
+    ("bullish", "bullish", "Bullish"),
+    ("above_sma", "sma", "Close > SMA10 & SMA20"),
+    ("volume_ok", "volume", "Volume > 2,000,000"),
+    ("macd_cross", "macd", "MACD golden cross"),
+    ("volume_surge", "volsurge", "Volume > 1.5× previous day"),
+    ("price_up", "priceup", "Close > previous close"),
+]
+
+
+def _condition_chip(value: bool | None, label: str) -> str:
+    cls = "unk" if value is None else ("ok" if value else "no")
+    mark = "&#8213;" if value is None else ("&#10003;" if value else "&#10007;")
+    return f'<div class="cond"><span class="cond-dot {cls}">{mark}</span><span class="cond-label">{html.escape(label)}</span></div>'
+
+
+def _score_badge(score: int, total: int) -> str:
+    tier = "good" if score >= 5 else ("warn" if score >= 3 else "crit")
+    return f'<span class="score-badge"><span class="score-dot {tier}"></span>{score}/{total}</span>'
 
 
 def build_html(rows: list[dict]) -> str:
@@ -300,28 +316,29 @@ def build_html(rows: list[dict]) -> str:
     for row in rows:
         symbol = row["ticker"].split(":", 1)[1] if ":" in row["ticker"] else row["ticker"]
         url = KLSE_CHART_URL.format(row["code"])
-        label = html.escape(f"{symbol} — {row['description']}")
+        name = html.escape(f"{symbol} — {row['description']}")
+        ticker_esc = html.escape(row["ticker"])
+        search_text = html.escape(f"{symbol} {row['description']}".lower())
+        score = sum(1 for key, _, _ in CONDITIONS if row.get(key) is True)
+
+        data_attrs = " ".join([f'data-ticker="{ticker_esc}"', f'data-search="{search_text}"', f'data-score="{score}"'] + [
+            f'data-{attr}="{_check_attr(row.get(key))}"' for key, attr, _ in CONDITIONS
+        ])
+        chips = "".join(_condition_chip(row.get(key), label) for key, _, label in CONDITIONS)
         sources = html.escape(", ".join(row["sources"]))
-        data_attrs = (
-            f'data-ticker="{html.escape(row["ticker"])}" '
-            f'data-bullish="{_check_attr(row.get("bullish"))}" '
-            f'data-sma="{_check_attr(row.get("above_sma"))}" '
-            f'data-volume="{_check_attr(row.get("volume_ok"))}" '
-            f'data-macd="{_check_attr(row.get("macd_cross"))}" '
-            f'data-volsurge="{_check_attr(row.get("volume_surge"))}" '
-            f'data-priceup="{_check_attr(row.get("price_up"))}"'
-        )
-        body_rows.append(f"""    <tr {data_attrs}>
-      <td><input type="checkbox" class="review" data-ticker="{html.escape(row['ticker'])}"></td>
-      <td><a href="{html.escape(url)}" target="_blank" rel="noopener">{label}</a></td>
-      {_check_cell(row.get("bullish"))}
-      {_check_cell(row.get("above_sma"))}
-      {_check_cell(row.get("volume_ok"))}
-      {_check_cell(row.get("macd_cross"))}
-      {_check_cell(row.get("volume_surge"))}
-      {_check_cell(row.get("price_up"))}
-      <td class="sources">{sources}</td>
-    </tr>""")
+
+        body_rows.append(f"""      <tr class="row" {data_attrs}>
+        <td class="check-cell"><input type="checkbox" class="review" data-ticker="{ticker_esc}"></td>
+        <td><a class="stock-link" href="{html.escape(url)}" target="_blank" rel="noopener">{name}</a></td>
+        <td>{_score_badge(score, len(CONDITIONS))}</td>
+        <td class="chevron">&#9656;</td>
+      </tr>
+      <tr class="detail">
+        <td colspan="4">
+          <div class="detail-grid">{chips}</div>
+          <div class="sources-line">From: {sources}</div>
+        </td>
+      </tr>""")
 
     generated = datetime.now().strftime("%Y-%m-%d %H:%M")
 
@@ -329,93 +346,282 @@ def build_html(rows: list[dict]) -> str:
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>KLSE Market Movers — Chart Links</title>
 <style>
-  body {{ font-family: system-ui, sans-serif; max-width: 960px; margin: 2rem auto; padding: 0 1rem; color: #1a1a1a; }}
-  h1 {{ font-size: 1.4rem; }}
-  .meta {{ color: #666; font-size: 0.9rem; margin-bottom: 1rem; }}
-  .filters {{ display: flex; gap: 1.2rem; flex-wrap: wrap; align-items: center; margin-bottom: 0.8rem;
-    font-size: 0.9rem; background: #f5f5f5; padding: 0.6rem 0.8rem; border-radius: 6px; }}
-  .filters label {{ display: flex; align-items: center; gap: 0.35rem; cursor: pointer; }}
-  table {{ border-collapse: collapse; width: 100%; }}
-  th, td {{ text-align: left; padding: 0.5rem 0.6rem; border-bottom: 1px solid #e0e0e0; }}
-  th {{ color: #444; font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.02em; }}
-  td.chk {{ text-align: center; font-weight: bold; }}
-  td.chk.ok {{ color: #1a8a3d; }}
-  td.chk.no {{ color: #c0392b; }}
-  td.chk.unknown {{ color: #aaa; font-weight: normal; }}
-  td.sources {{ color: #777; font-size: 0.85rem; white-space: nowrap; }}
-  a {{ color: #0b5fff; text-decoration: none; }}
-  a:hover {{ text-decoration: underline; }}
-  tr.checked td {{ color: #999; }}
-  tr.checked a {{ color: #999; text-decoration: line-through; }}
-  tr.hidden {{ display: none; }}
-  input[type="checkbox"] {{ width: 1.1rem; height: 1.1rem; cursor: pointer; }}
-  #counter {{ font-size: 0.9rem; color: #444; margin-bottom: 0.5rem; }}
+  :root {{
+    --surface: #fcfcfb;
+    --page: #f9f9f7;
+    --ink: #0b0b0b;
+    --ink-2: #52514e;
+    --ink-muted: #898781;
+    --gridline: #e1e0d9;
+    --border: rgba(11,11,11,0.10);
+    --accent: #2a78d6;
+    --good: #0ca30c;
+    --warning: #c98500;
+    --critical: #d03b3b;
+    --chip-bg: #f2f1ee;
+  }}
+  @media (prefers-color-scheme: dark) {{
+    :root {{
+      --surface: #1a1a19;
+      --page: #0d0d0d;
+      --ink: #ffffff;
+      --ink-2: #c3c2b7;
+      --ink-muted: #898781;
+      --gridline: #2c2c2a;
+      --border: rgba(255,255,255,0.10);
+      --accent: #3987e5;
+      --good: #0ca30c;
+      --warning: #fab219;
+      --critical: #e66767;
+      --chip-bg: #242422;
+    }}
+  }}
+  /* Explicit override from the in-page toggle — wins over prefers-color-scheme
+     in both directions (a [data-theme] rule is more specific than the bare
+     :root inside the media query above, regardless of source order). */
+  :root[data-theme="dark"] {{
+    --surface: #1a1a19; --page: #0d0d0d; --ink: #ffffff; --ink-2: #c3c2b7;
+    --ink-muted: #898781; --gridline: #2c2c2a; --border: rgba(255,255,255,0.10);
+    --accent: #3987e5; --good: #0ca30c; --warning: #fab219; --critical: #e66767;
+    --chip-bg: #242422;
+  }}
+  :root[data-theme="light"] {{
+    --surface: #fcfcfb; --page: #f9f9f7; --ink: #0b0b0b; --ink-2: #52514e;
+    --ink-muted: #898781; --gridline: #e1e0d9; --border: rgba(11,11,11,0.10);
+    --accent: #2a78d6; --good: #0ca30c; --warning: #c98500; --critical: #d03b3b;
+    --chip-bg: #f2f1ee;
+  }}
+  * {{ box-sizing: border-box; }}
+  body {{
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    background: var(--page); color: var(--ink);
+    margin: 0; padding: 2rem 1rem 4rem;
+  }}
+  .wrap {{ max-width: 900px; margin: 0 auto; }}
+  .header-row {{ display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; }}
+  h1 {{ font-size: 1.5rem; font-weight: 600; margin: 0 0 0.25rem; }}
+  .meta {{ color: var(--ink-2); font-size: 0.875rem; margin: 0 0 1.25rem; }}
+  .theme-toggle {{
+    flex: none; padding: 0.4rem 0.75rem; margin-top: 0.15rem;
+    border: 1px solid var(--border); border-radius: 999px;
+    background: var(--surface); color: var(--ink-2); font-size: 0.78rem;
+    cursor: pointer; font-family: inherit;
+  }}
+  .theme-toggle:hover {{ color: var(--ink); }}
+
+  .search {{
+    width: 100%; padding: 0.55rem 0.8rem; margin-bottom: 0.75rem;
+    border: 1px solid var(--border); border-radius: 8px;
+    background: var(--surface); color: var(--ink); font-size: 0.9rem;
+  }}
+  .search:focus {{ outline: 2px solid var(--accent); outline-offset: 1px; }}
+
+  .chips {{ display: flex; flex-wrap: wrap; gap: 0.4rem; margin-bottom: 0.9rem; }}
+  .chip {{
+    display: inline-flex; align-items: center; gap: 0.35rem;
+    padding: 0.35rem 0.7rem; border: 1px solid var(--border); border-radius: 999px;
+    background: var(--surface); color: var(--ink-2); font-size: 0.8rem;
+    cursor: pointer; user-select: none; font-family: inherit;
+  }}
+  .chip[aria-pressed="true"] {{ background: var(--accent); border-color: var(--accent); color: #fff; }}
+
+  #counter {{ color: var(--ink-2); font-size: 0.85rem; margin: 0 0 0.6rem; }}
+
+  .table-wrap {{ overflow-x: auto; border: 1px solid var(--border); border-radius: 10px; }}
+  table {{ width: 100%; border-collapse: collapse; background: var(--surface); }}
+  thead th {{
+    position: sticky; top: 0; background: var(--surface); text-align: left;
+    font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.03em;
+    color: var(--ink-muted); padding: 0.6rem 0.75rem; border-bottom: 1px solid var(--gridline);
+    white-space: nowrap;
+  }}
+  th.sortable {{ cursor: pointer; }}
+  th.sortable:hover {{ color: var(--ink-2); }}
+  th.sort-active {{ color: var(--ink); }}
+
+  tr.row {{ border-bottom: 1px solid var(--gridline); cursor: pointer; }}
+  tr.row:hover {{ background: var(--chip-bg); }}
+  tr.row.checked .stock-link {{ color: var(--ink-muted); text-decoration: line-through; }}
+  tr.row.hidden-row, tr.row.hidden-row + tr.detail {{ display: none; }}
+  td {{ padding: 0.6rem 0.75rem; font-size: 0.9rem; vertical-align: middle; }}
+  td.check-cell {{ width: 2rem; }}
+  input[type="checkbox"] {{ width: 1.05rem; height: 1.05rem; cursor: pointer; }}
+  a.stock-link {{ color: var(--ink); text-decoration: none; font-weight: 500; }}
+  a.stock-link:hover {{ color: var(--accent); text-decoration: underline; }}
+
+  td.chevron {{ width: 1.5rem; text-align: center; color: var(--ink-muted); transition: transform 0.15s; }}
+  tr.row.open td.chevron {{ transform: rotate(90deg); }}
+
+  .score-badge {{
+    display: inline-flex; align-items: center; gap: 0.4rem;
+    padding: 0.2rem 0.6rem; border-radius: 999px; border: 1px solid var(--border);
+    font-variant-numeric: tabular-nums; font-weight: 600; font-size: 0.85rem;
+  }}
+  .score-dot {{ width: 8px; height: 8px; border-radius: 50%; flex: none; }}
+  .score-dot.good {{ background: var(--good); }}
+  .score-dot.warn {{ background: var(--warning); }}
+  .score-dot.crit {{ background: var(--critical); }}
+
+  tr.detail {{ display: none; }}
+  tr.detail.open {{ display: table-row; }}
+  tr.detail td {{ padding: 0.85rem 0.75rem; background: var(--chip-bg); border-bottom: 1px solid var(--gridline); }}
+  .detail-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 0.5rem 1rem; }}
+  .cond {{ display: flex; align-items: center; gap: 0.5rem; font-size: 0.85rem; }}
+  .cond-dot {{
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 16px; height: 16px; border-radius: 50%; flex: none;
+    font-size: 0.6rem; font-weight: bold; color: #fff;
+  }}
+  .cond-dot.ok {{ background: var(--good); }}
+  .cond-dot.no {{ background: var(--critical); }}
+  .cond-dot.unk {{ background: var(--ink-muted); }}
+  .cond-label {{ color: var(--ink-2); }}
+  .sources-line {{ margin-top: 0.75rem; font-size: 0.78rem; color: var(--ink-muted); }}
+
+  @media (max-width: 560px) {{
+    body {{ padding: 1.25rem 0.6rem 3rem; }}
+  }}
 </style>
 </head>
 <body>
-  <h1>KLSE Market Movers — Chart Links</h1>
-  <p class="meta">Generated {generated}. {len(rows)} stocks. Bullish / &gt;SMA10&amp;20 / Vol&gt;2M / MACD
-    golden cross (MACD line currently above its signal line) / Vol&gt;1.5x prev day / Price&gt;prev close
-    are computed from each stock's daily bars — use the filters below to narrow the page (no rerun
-    needed). "—" means the check couldn't be computed (insufficient history or a fetch error).</p>
-  <div class="filters">
-    <label><input type="checkbox" id="filterBullish"> Bullish only</label>
-    <label><input type="checkbox" id="filterSma"> Close &gt; SMA10 &amp; SMA20 only</label>
-    <label><input type="checkbox" id="filterVolume"> Volume &gt; 2,000,000 only</label>
-    <label><input type="checkbox" id="filterMacd"> MACD golden cross (MACD &gt; signal) only</label>
-    <label><input type="checkbox" id="filterVolSurge"> Volume &gt; 1.5&times; previous day only</label>
-    <label><input type="checkbox" id="filterPriceUp"> Close &gt; previous close only</label>
-  </div>
-  <p id="counter"></p>
-  <table id="movers">
-    <thead><tr><th></th><th>Stock</th><th>Bullish</th><th>&gt;SMA10&amp;20</th><th>Vol&gt;2M</th><th>MACD Cross</th><th>Vol&gt;1.5x Prev</th><th>Price&gt;Prev</th><th>From</th></tr></thead>
-    <tbody>
+  <div class="wrap">
+    <div class="header-row">
+      <h1>KLSE Market Movers</h1>
+      <button type="button" class="theme-toggle" id="themeToggle">Theme: System</button>
+    </div>
+    <p class="meta">Generated {generated} &middot; {len(rows)} stocks &middot; click a row for the full breakdown
+      of its 6 conditions &middot; "&#8213;" means a condition couldn't be computed (insufficient history
+      or a fetch error).</p>
+
+    <input type="search" class="search" id="search" placeholder="Search ticker or company name&hellip;">
+
+    <div class="chips" role="group" aria-label="Condition filters">
+      <button type="button" class="chip" data-filter="bullish" aria-pressed="false">Bullish</button>
+      <button type="button" class="chip" data-filter="sma" aria-pressed="false">&gt;SMA10&amp;20</button>
+      <button type="button" class="chip" data-filter="volume" aria-pressed="false">Vol&gt;2M</button>
+      <button type="button" class="chip" data-filter="macd" aria-pressed="false">MACD Cross</button>
+      <button type="button" class="chip" data-filter="volsurge" aria-pressed="false">Vol&gt;1.5&times; Prev</button>
+      <button type="button" class="chip" data-filter="priceup" aria-pressed="false">Price&gt;Prev</button>
+    </div>
+
+    <p id="counter"></p>
+
+    <div class="table-wrap">
+      <table id="movers">
+        <thead>
+          <tr>
+            <th></th>
+            <th class="sortable" data-sort="stock">Stock</th>
+            <th class="sortable" data-sort="score">Score</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="tbody">
 {chr(10).join(body_rows)}
-    </tbody>
-  </table>
+        </tbody>
+      </table>
+    </div>
+  </div>
   <script>
-    const rows = Array.from(document.querySelectorAll('#movers tbody tr'));
-    const boxes = Array.from(document.querySelectorAll('input.review'));
+    // Theme toggle: cycles System -> Light -> Dark -> System. "System" means no
+    // data-theme attribute at all, so prefers-color-scheme (and any browser
+    // extension that flips it) decides. Light/Dark pin an explicit choice,
+    // persisted so it survives a reload of this file.
+    const THEME_KEY = 'klse_theme';
+    const themeToggle = document.getElementById('themeToggle');
+    const themeCycle = ['system', 'light', 'dark'];
+
+    function applyTheme(mode) {{
+      if (mode === 'system') {{
+        delete document.documentElement.dataset.theme;
+      }} else {{
+        document.documentElement.dataset.theme = mode;
+      }}
+      themeToggle.textContent = 'Theme: ' + mode[0].toUpperCase() + mode.slice(1);
+    }}
+
+    let currentTheme = localStorage.getItem(THEME_KEY) || 'system';
+    applyTheme(currentTheme);
+    themeToggle.addEventListener('click', () => {{
+      currentTheme = themeCycle[(themeCycle.indexOf(currentTheme) + 1) % themeCycle.length];
+      localStorage.setItem(THEME_KEY, currentTheme);
+      applyTheme(currentTheme);
+    }});
+
+    const tbody = document.getElementById('tbody');
+    const search = document.getElementById('search');
+    const chips = Array.from(document.querySelectorAll('.chip'));
     const counter = document.getElementById('counter');
-    const filterBullish = document.getElementById('filterBullish');
-    const filterSma = document.getElementById('filterSma');
-    const filterVolume = document.getElementById('filterVolume');
-    const filterMacd = document.getElementById('filterMacd');
-    const filterVolSurge = document.getElementById('filterVolSurge');
-    const filterPriceUp = document.getElementById('filterPriceUp');
+    const headers = Array.from(document.querySelectorAll('th.sortable'));
+
+    function rowPairs() {{
+      return Array.from(tbody.querySelectorAll('tr.row')).map(row => [row, row.nextElementSibling]);
+    }}
 
     function keyFor(cb) {{ return 'klse_check_' + cb.dataset.ticker; }}
 
     function updateCounter() {{
-      const visible = rows.filter(tr => !tr.classList.contains('hidden'));
+      const pairs = rowPairs();
+      const visible = pairs.filter(([row]) => !row.classList.contains('hidden-row'));
+      const boxes = Array.from(document.querySelectorAll('input.review'));
       const checked = boxes.filter(cb => cb.checked).length;
-      counter.textContent = checked + ' / ' + boxes.length + ' checked (' + visible.length + ' / ' + rows.length + ' shown)';
+      counter.textContent = checked + ' / ' + boxes.length + ' reviewed · ' + visible.length + ' / ' + pairs.length + ' shown';
     }}
 
     function applyFilters() {{
-      rows.forEach(tr => {{
+      const term = search.value.trim().toLowerCase();
+      const active = chips.filter(c => c.getAttribute('aria-pressed') === 'true').map(c => c.dataset.filter);
+      rowPairs().forEach(([row]) => {{
         let show = true;
-        if (filterBullish.checked && tr.dataset.bullish !== '1') show = false;
-        if (filterSma.checked && tr.dataset.sma !== '1') show = false;
-        if (filterVolume.checked && tr.dataset.volume !== '1') show = false;
-        if (filterMacd.checked && tr.dataset.macd !== '1') show = false;
-        if (filterVolSurge.checked && tr.dataset.volsurge !== '1') show = false;
-        if (filterPriceUp.checked && tr.dataset.priceup !== '1') show = false;
-        tr.classList.toggle('hidden', !show);
+        if (term && !row.dataset.search.includes(term)) show = false;
+        for (const f of active) {{
+          if (row.dataset[f] !== '1') show = false;
+        }}
+        row.classList.toggle('hidden-row', !show);
       }});
       updateCounter();
     }}
 
-    [filterBullish, filterSma, filterVolume, filterMacd, filterVolSurge, filterPriceUp]
-      .forEach(cb => cb.addEventListener('change', applyFilters));
+    search.addEventListener('input', applyFilters);
+    chips.forEach(chip => chip.addEventListener('click', () => {{
+      chip.setAttribute('aria-pressed', chip.getAttribute('aria-pressed') !== 'true');
+      applyFilters();
+    }}));
 
-    boxes.forEach(cb => {{
+    let sortState = {{ key: null, dir: 1 }};
+    function applySort(key) {{
+      sortState.dir = (sortState.key === key) ? -sortState.dir : 1;
+      sortState.key = key;
+      headers.forEach(h => h.classList.toggle('sort-active', h.dataset.sort === key));
+      const pairs = rowPairs();
+      pairs.sort((a, b) => {{
+        const [rowA] = a, [rowB] = b;
+        if (key === 'score') {{
+          return (Number(rowA.dataset.score) - Number(rowB.dataset.score)) * sortState.dir;
+        }}
+        return rowA.dataset.search.localeCompare(rowB.dataset.search) * sortState.dir;
+      }});
+      pairs.forEach(([row, detail]) => {{ tbody.appendChild(row); tbody.appendChild(detail); }});
+    }}
+    headers.forEach(h => h.addEventListener('click', () => applySort(h.dataset.sort)));
+
+    tbody.addEventListener('click', (e) => {{
+      if (e.target.closest('input.review') || e.target.closest('a.stock-link')) return;
+      const row = e.target.closest('tr.row');
+      if (!row) return;
+      row.classList.toggle('open');
+      row.nextElementSibling.classList.toggle('open');
+    }});
+
+    document.querySelectorAll('input.review').forEach(cb => {{
       if (localStorage.getItem(keyFor(cb)) === '1') {{
         cb.checked = true;
         cb.closest('tr').classList.add('checked');
       }}
+      cb.addEventListener('click', (e) => e.stopPropagation());
       cb.addEventListener('change', () => {{
         localStorage.setItem(keyFor(cb), cb.checked ? '1' : '0');
         cb.closest('tr').classList.toggle('checked', cb.checked);
