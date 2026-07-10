@@ -308,16 +308,18 @@ can tick off after reviewing a chart — state is saved in the browser's
 `localStorage`, so it survives a page reload (per-file, since it's a local
 `file://`/`http://localhost` page).
 
-For every resolved stock it also pulls four checks — **Bullish** (close >
+For every resolved stock it also pulls six checks — **Bullish** (close >
 open), **&gt;SMA10&amp;20** (close above *both* the 10- and 20-day SMA),
-**Vol&gt;2M** (volume > 2,000,000), and **MACD Cross** (standard
-MACD(12,26,9): MACD line currently above its signal line right now — a
-state, **not** "crossed on this exact bar") — shown as ✓/✗/— columns
-(`—` = couldn't be computed: not enough history for that specific check,
-or a fetch error; bullish/volume only need the latest bar so they still
-compute even when SMA/MACD can't).
+**Vol&gt;2M** (volume > 2,000,000), **MACD Cross** (standard MACD(12,26,9):
+MACD line currently above its signal line right now — a state, **not**
+"crossed on this exact bar"), **Vol&gt;1.5x Prev** (today's volume >= 1.5×
+yesterday's), and **Price&gt;Prev** (today's close > yesterday's close) —
+shown as ✓/✗/— columns (`—` = couldn't be computed: not enough history for
+that specific check, or a fetch error; bullish/volume/the two
+previous-day checks only need 1–2 bars so they still compute even when
+SMA/MACD can't).
 
-All four are computed from **KLSEScreener's own daily price history**
+All six are computed from **KLSEScreener's own daily price history**
 (`klsescreener.com/v2/trading_view/history`) — the same TradingView
 Charting Library data feed that powers the `/v2/charting/chart/<code>`
 page the link opens — fetched per resolved ticker (~1.5 years of bars each
@@ -329,9 +331,10 @@ especially, since it's an EMA over the whole history). Sourcing from
 KLSEScreener's own feed means the checks match the exact chart you click
 through to, at the cost of one HTTP call per ticker instead of one batched
 call (see Runtime below). These checks always run; there's no CLI flag to
-skip them. Filtering happens **in the page itself**: four checkboxes above
+skip them. Filtering happens **in the page itself**: six checkboxes above
 the table ("Bullish only", "Close > SMA10 & SMA20 only", "Volume >
-2,000,000 only", "MACD golden cross (MACD > signal) only") hide/show rows
+2,000,000 only", "MACD golden cross (MACD > signal) only", "Volume > 1.5×
+previous day only", "Close > previous close only") hide/show rows
 client-side (AND logic if you tick more than one) — no rerun needed to
 change your mind.
 
@@ -360,7 +363,7 @@ end, not silently dropped.
 
 **Runtime:** merging 5 lists of `--top 100` typically yields ~250–450 unique
 tickers (real overlap between volatile/active/high-beta lists). Both KLSE
-code resolution *and* the four checks are one HTTP call per ticker to
+code resolution *and* the six checks are one HTTP call per ticker to
 KLSEScreener (~0.3s rate limit each, ~0.25s measured latency per call) — two
 per-ticker passes over the same host, roughly 6–8 min total for a large
 list. Slower than a batched TradingView-sourced version would be, but this

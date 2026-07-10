@@ -25,12 +25,13 @@ convention as ohlcv_fetcher.py and market_movers.py):
 
 For every resolved stock, also pulls ~1.5 years of daily bars from
 KLSEScreener's own chart data feed (not TradingView's — deliberately, so the
-checks match the exact chart the link opens) and computes four checks —
+checks match the exact chart the link opens) and computes six checks —
 bullish candle (close > open), close above BOTH SMA10 and SMA20, volume >
-2,000,000, and a MACD(12,26,9) golden cross (MACD line currently above its
-signal line right now — a state, not "crossed on this exact bar"). Written
-as columns in the HTML with a checkbox per column so you can filter the
-page itself (client-side, no rerun needed) rather than via a CLI flag.
+2,000,000, a MACD(12,26,9) golden cross (MACD line currently above its
+signal line right now — a state, not "crossed on this exact bar"), volume
+>= 1.5x the previous day's volume, and close > previous day's close.
+Written as columns in the HTML with a checkbox per column so you can filter
+the page itself (client-side, no rerun needed) rather than via a CLI flag.
 
 Run:
     python klse_chart_links.py                       # top 100 per list
@@ -188,7 +189,12 @@ def resolve_all(merged: dict[str, dict]) -> tuple[list[dict], list[str]]:
 # in the HTML and filterable there, not via a CLI flag.
 # ---------------------------------------------------------------------------
 
-EMPTY_CHECKS = {"bullish": None, "above_sma": None, "volume_ok": None, "macd_cross": None}
+VOLUME_SURGE_MULTIPLE = 1.5   # today's volume must be >= this many times yesterday's
+
+EMPTY_CHECKS = {
+    "bullish": None, "above_sma": None, "volume_ok": None, "macd_cross": None,
+    "volume_surge": None, "price_up": None,
+}
 
 
 def fetch_klse_history(code: str) -> dict | None:
@@ -224,7 +230,10 @@ def compute_checks(history: dict) -> dict:
     even when there's too little history for SMA/MACD.
 
     macd_cross is "golden cross" as a current state — MACD line currently
-    above its signal line right now — not "crossed on this exact bar"."""
+    above its signal line right now — not "crossed on this exact bar".
+
+    volume_surge/price_up need yesterday's bar too (today vs. previous day),
+    so they're None with only 1 bar of history, same as the others."""
     close = pd.Series(history["c"])
     n = len(close)
     bullish = bool(history["c"][-1] > history["o"][-1])
@@ -244,11 +253,20 @@ def compute_checks(history: dict) -> dict:
         signal = macd.ewm(span=9, adjust=False).mean()
         macd_cross = bool(macd.iloc[-1] > signal.iloc[-1])
 
-    return {"bullish": bullish, "above_sma": above_sma, "volume_ok": volume_ok, "macd_cross": macd_cross}
+    volume_surge = None
+    price_up = None
+    if n >= 2:
+        volume_surge = bool(history["v"][-1] >= VOLUME_SURGE_MULTIPLE * history["v"][-2])
+        price_up = bool(history["c"][-1] > history["c"][-2])
+
+    return {
+        "bullish": bullish, "above_sma": above_sma, "volume_ok": volume_ok, "macd_cross": macd_cross,
+        "volume_surge": volume_surge, "price_up": price_up,
+    }
 
 
 def annotate_checks(resolved: list[dict]) -> list[dict]:
-    """Adds bullish/above_sma/volume_ok/macd_cross to every resolved row."""
+    """Adds bullish/above_sma/volume_ok/macd_cross/volume_surge/price_up to every resolved row."""
     annotated = []
     for i, row in enumerate(resolved, 1):
         history = fetch_klse_history(row["code"])
@@ -289,7 +307,9 @@ def build_html(rows: list[dict]) -> str:
             f'data-bullish="{_check_attr(row.get("bullish"))}" '
             f'data-sma="{_check_attr(row.get("above_sma"))}" '
             f'data-volume="{_check_attr(row.get("volume_ok"))}" '
-            f'data-macd="{_check_attr(row.get("macd_cross"))}"'
+            f'data-macd="{_check_attr(row.get("macd_cross"))}" '
+            f'data-volsurge="{_check_attr(row.get("volume_surge"))}" '
+            f'data-priceup="{_check_attr(row.get("price_up"))}"'
         )
         body_rows.append(f"""    <tr {data_attrs}>
       <td><input type="checkbox" class="review" data-ticker="{html.escape(row['ticker'])}"></td>
@@ -298,6 +318,8 @@ def build_html(rows: list[dict]) -> str:
       {_check_cell(row.get("above_sma"))}
       {_check_cell(row.get("volume_ok"))}
       {_check_cell(row.get("macd_cross"))}
+      {_check_cell(row.get("volume_surge"))}
+      {_check_cell(row.get("price_up"))}
       <td class="sources">{sources}</td>
     </tr>""")
 
@@ -335,18 +357,20 @@ def build_html(rows: list[dict]) -> str:
 <body>
   <h1>KLSE Market Movers — Chart Links</h1>
   <p class="meta">Generated {generated}. {len(rows)} stocks. Bullish / &gt;SMA10&amp;20 / Vol&gt;2M / MACD
-    golden cross (MACD line currently above its signal line) are computed from each stock's daily
-    bars — use the filters below to narrow the page (no rerun needed). "—" means the check couldn't
-    be computed (insufficient history or a fetch error).</p>
+    golden cross (MACD line currently above its signal line) / Vol&gt;1.5x prev day / Price&gt;prev close
+    are computed from each stock's daily bars — use the filters below to narrow the page (no rerun
+    needed). "—" means the check couldn't be computed (insufficient history or a fetch error).</p>
   <div class="filters">
     <label><input type="checkbox" id="filterBullish"> Bullish only</label>
     <label><input type="checkbox" id="filterSma"> Close &gt; SMA10 &amp; SMA20 only</label>
     <label><input type="checkbox" id="filterVolume"> Volume &gt; 2,000,000 only</label>
     <label><input type="checkbox" id="filterMacd"> MACD golden cross (MACD &gt; signal) only</label>
+    <label><input type="checkbox" id="filterVolSurge"> Volume &gt; 1.5&times; previous day only</label>
+    <label><input type="checkbox" id="filterPriceUp"> Close &gt; previous close only</label>
   </div>
   <p id="counter"></p>
   <table id="movers">
-    <thead><tr><th></th><th>Stock</th><th>Bullish</th><th>&gt;SMA10&amp;20</th><th>Vol&gt;2M</th><th>MACD Cross</th><th>From</th></tr></thead>
+    <thead><tr><th></th><th>Stock</th><th>Bullish</th><th>&gt;SMA10&amp;20</th><th>Vol&gt;2M</th><th>MACD Cross</th><th>Vol&gt;1.5x Prev</th><th>Price&gt;Prev</th><th>From</th></tr></thead>
     <tbody>
 {chr(10).join(body_rows)}
     </tbody>
@@ -359,6 +383,8 @@ def build_html(rows: list[dict]) -> str:
     const filterSma = document.getElementById('filterSma');
     const filterVolume = document.getElementById('filterVolume');
     const filterMacd = document.getElementById('filterMacd');
+    const filterVolSurge = document.getElementById('filterVolSurge');
+    const filterPriceUp = document.getElementById('filterPriceUp');
 
     function keyFor(cb) {{ return 'klse_check_' + cb.dataset.ticker; }}
 
@@ -375,12 +401,15 @@ def build_html(rows: list[dict]) -> str:
         if (filterSma.checked && tr.dataset.sma !== '1') show = false;
         if (filterVolume.checked && tr.dataset.volume !== '1') show = false;
         if (filterMacd.checked && tr.dataset.macd !== '1') show = false;
+        if (filterVolSurge.checked && tr.dataset.volsurge !== '1') show = false;
+        if (filterPriceUp.checked && tr.dataset.priceup !== '1') show = false;
         tr.classList.toggle('hidden', !show);
       }});
       updateCounter();
     }}
 
-    [filterBullish, filterSma, filterVolume, filterMacd].forEach(cb => cb.addEventListener('change', applyFilters));
+    [filterBullish, filterSma, filterVolume, filterMacd, filterVolSurge, filterPriceUp]
+      .forEach(cb => cb.addEventListener('change', applyFilters));
 
     boxes.forEach(cb => {{
       if (localStorage.getItem(keyFor(cb)) === '1') {{
