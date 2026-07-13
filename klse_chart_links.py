@@ -428,7 +428,15 @@ def build_html(rows: list[dict]) -> str:
   }}
   .chip[aria-pressed="true"] {{ background: var(--accent); border-color: var(--accent); color: #fff; }}
 
-  #counter {{ color: var(--ink-2); font-size: 0.85rem; margin: 0 0 0.6rem; }}
+  .bulk-row {{ display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; margin: 0 0 0.6rem; }}
+  #counter {{ color: var(--ink-2); font-size: 0.85rem; margin: 0; }}
+  .bulk-actions {{ display: flex; gap: 0.4rem; flex: none; }}
+  .bulk-btn {{
+    padding: 0.3rem 0.65rem; border: 1px solid var(--border); border-radius: 999px;
+    background: var(--surface); color: var(--ink-2); font-size: 0.78rem;
+    cursor: pointer; font-family: inherit;
+  }}
+  .bulk-btn:hover {{ color: var(--ink); }}
 
   .table-wrap {{ overflow-x: auto; border: 1px solid var(--border); border-radius: 10px; }}
   table {{ width: 100%; border-collapse: collapse; background: var(--surface); }}
@@ -507,7 +515,13 @@ def build_html(rows: list[dict]) -> str:
       <button type="button" class="chip" data-filter="priceup" aria-pressed="false">Price&gt;Prev</button>
     </div>
 
-    <p id="counter"></p>
+    <div class="bulk-row">
+      <div class="bulk-actions">
+        <button type="button" class="bulk-btn" id="selectAllBtn">Select all</button>
+        <button type="button" class="bulk-btn" id="deselectAllBtn">Deselect all</button>
+      </div>
+      <p id="counter"></p>
+    </div>
 
     <div class="table-wrap">
       <table id="movers">
@@ -616,6 +630,12 @@ def build_html(rows: list[dict]) -> str:
       row.nextElementSibling.classList.toggle('open');
     }});
 
+    function setChecked(cb, checked) {{
+      cb.checked = checked;
+      localStorage.setItem(keyFor(cb), checked ? '1' : '0');
+      cb.closest('tr').classList.toggle('checked', checked);
+    }}
+
     document.querySelectorAll('input.review').forEach(cb => {{
       if (localStorage.getItem(keyFor(cb)) === '1') {{
         cb.checked = true;
@@ -623,11 +643,22 @@ def build_html(rows: list[dict]) -> str:
       }}
       cb.addEventListener('click', (e) => e.stopPropagation());
       cb.addEventListener('change', () => {{
-        localStorage.setItem(keyFor(cb), cb.checked ? '1' : '0');
-        cb.closest('tr').classList.toggle('checked', cb.checked);
+        setChecked(cb, cb.checked);
         updateCounter();
       }});
     }});
+
+    function bulkSetVisible(checked) {{
+      rowPairs().forEach(([row]) => {{
+        if (row.classList.contains('hidden-row')) return;
+        const cb = row.querySelector('input.review');
+        if (cb) setChecked(cb, checked);
+      }});
+      updateCounter();
+    }}
+    document.getElementById('selectAllBtn').addEventListener('click', () => bulkSetVisible(true));
+    document.getElementById('deselectAllBtn').addEventListener('click', () => bulkSetVisible(false));
+
     updateCounter();
   </script>
 </body>
