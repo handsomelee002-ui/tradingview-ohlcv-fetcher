@@ -16,9 +16,10 @@ stock. Fully automatic — reads a ticker list, loops every stock, no manual ste
   own top gainers/losers/volume lists per market and feeds them straight into
   the same OHLCV fetch — see *Market movers* below.
 - **Want a quick-scan HTML watchlist for Malaysia?** `klse_chart_links.py`
-  pulls TradingView's Malaysia market-movers lists and turns them into a
-  checkbox-able HTML page of KLSEScreener chart links — see *KLSE chart
-  links* below.
+  pulls TradingView's Malaysia market-movers lists, filters down to stocks
+  passing six bullish/momentum checks, and turns them into a checkbox-able
+  HTML shortlist with links to KLSEScreener or TradingView charts — see
+  *KLSE chart links* below.
 
 > `tvDatafeed` is an unofficial library (the *data* is official; the *access
 > method* is not). It can break if TradingView changes its backend. For
@@ -299,44 +300,51 @@ data/topx/<market>_<list>_top<n>/<ticker>.csv     one OHLCV CSV per stock, same 
 
 ## KLSE chart links (Malaysia market movers → clickable HTML)
 
-`klse_chart_links.py` pulls 5 of TradingView's Malaysia market-movers lists
-(unusual volume, active, most volatile, high beta, best performing), merges
-and dedupes the tickers, resolves each to its KLSEScreener numeric stock
-code, and writes a static HTML file of clickable chart links
-(`klsescreener.com/v2/charting/chart/<code>`). Each row has a checkbox you
-can tick off after reviewing a chart — state is saved in the browser's
-`localStorage`, so it survives a page reload (per-file, since it's a local
-`file://`/`http://localhost` page).
+`klse_chart_links.py` pulls 9 of TradingView's Malaysia market-movers lists
+(unusual volume, active, most volatile, high beta, best performing, top
+gainers, top volume, all-time high, at 52-week high), merges and dedupes
+the tickers, resolves each to its KLSEScreener numeric stock code, and
+writes a static HTML file of clickable chart links. Most lists use an
+explicit TradingView sort field; `all_time_high` instead uses TradingView's
+undocumented `preset` scanner parameter, which reproduces one of
+TradingView's own market-movers menu categories (with whatever extra
+filters that page applies, e.g. liquidity minimums) rather than a manual
+sort — found by inspecting
+`tradingview.com/markets/stocks-malaysia/market-movers-ath/`'s page source.
+`at_52w_high` has no reachable preset name, so it's built directly: a
+column-to-column filter (`close >= price_52_week_high`) sorted by volume
+descending, so genuinely active breakouts rank above stocks whose "52-week
+high" is just a stale, never-revisited print with zero volume today.
 
-For every resolved stock it also pulls six checks — **Bullish** (close >
-open), **&gt;SMA10&amp;20** (close above *both* the 10- and 20-day SMA),
-**Vol&gt;2M** (volume > 2,000,000), **MACD Cross** (standard MACD(12,26,9):
+For every resolved stock it computes six checks — **Bullish Bar (Close >
+Open)**, **Close > SMA10 & SMA20** (close above *both* the 10- and 20-day
+SMA), **Volume > 2,000,000**, **MACD golden cross** (standard MACD(12,26,9):
 MACD line currently above its signal line right now — a state, **not**
-"crossed on this exact bar"), **Vol&gt;1.5x Prev** (today's volume >= 1.5×
-yesterday's), and **Price&gt;Prev** (today's close > yesterday's close) —
-shown as ✓/✗/— columns (`—` = couldn't be computed: not enough history for
-that specific check, or a fetch error; bullish/volume/the two
-previous-day checks only need 1–2 bars so they still compute even when
-SMA/MACD can't).
+"crossed on this exact bar"), **Volume > 1.5× previous day**, and **Close >
+previous close** — all computed from **KLSEScreener's own daily price
+history** (`klsescreener.com/v2/trading_view/history`, ~1.5 years of bars
+per ticker) rather than TradingView's scanner data, so the checks match the
+exact chart the link opens (KLSEScreener and TradingView are different data
+vendors; small price-series differences compound into different SMA/MACD
+values). **Only stocks that pass all six checks make it into the output
+file** — this filtering happens in Python before the HTML is written, not
+client-side, so the page you get is already the shortlist, not a "tick a
+box to filter" browse-everything page.
 
-All six are computed from **KLSEScreener's own daily price history**
-(`klsescreener.com/v2/trading_view/history`) — the same TradingView
-Charting Library data feed that powers the `/v2/charting/chart/<code>`
-page the link opens — fetched per resolved ticker (~1.5 years of bars each
-time) and computed locally with the standard SMA/MACD formulas. This is
-**deliberately not** TradingView's own scanner data: KLSEScreener and
-TradingView are different data vendors, and even small differences in
-historical price series compound into different SMA/MACD values (MACD
-especially, since it's an EMA over the whole history). Sourcing from
-KLSEScreener's own feed means the checks match the exact chart you click
-through to, at the cost of one HTTP call per ticker instead of one batched
-call (see Runtime below). These checks always run; there's no CLI flag to
-skip them. Filtering happens **in the page itself**: six checkboxes above
-the table ("Bullish only", "Close > SMA10 & SMA20 only", "Volume >
-2,000,000 only", "MACD golden cross (MACD > signal) only", "Volume > 1.5×
-previous day only", "Close > previous close only") hide/show rows
-client-side (AND logic if you tick more than one) — no rerun needed to
-change your mind.
+The HTML page itself:
+- A static legend card lists all 6 conditions (informational only — every
+  row already passes them, so there's nothing to toggle).
+- Each row: a review checkbox (state persisted in the browser's
+  `localStorage`, survives a reload), a note button (pop-up per-stock
+  free-text notes, also `localStorage`-backed, with a dot indicator when a
+  note exists), the stock name/link, and a small "From: <lists>" line
+  showing which of the 9 market-movers lists surfaced it.
+- A search box filters by ticker/company name; Select all / Deselect all
+  bulk-toggle the review checkboxes; a counter shows `X / N reviewed`.
+- A theme toggle (System/Light/Dark) and a chart-source toggle switch every
+  row's link between KLSEScreener (`klsescreener.com/v2/charting/chart/<code>`)
+  and TradingView (`tradingview.com/chart/?symbol=<TICKER>`) — both choices
+  persist across reloads.
 
 ```powershell
 python klse_chart_links.py                      # top 100 per list
@@ -345,7 +353,7 @@ python klse_chart_links.py --top 50
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--top N` | `100` | Tickers to take from each of the 5 lists before merging. |
+| `--top N` | `100` | Tickers to take from each of the 9 lists before merging. |
 
 No `--out` flag — output always goes to `data/klse_links/` (same `data/`
 convention as `ohlcv_fetcher.py`/`market_movers.py`), one dated file per run:
@@ -361,13 +369,17 @@ sharing the same prefix, e.g. searching `MAYBANK` also returns
 `MAYBANKC2H`). Any ticker with no exact match is skipped and printed at the
 end, not silently dropped.
 
-**Runtime:** merging 5 lists of `--top 100` typically yields ~250–450 unique
-tickers (real overlap between volatile/active/high-beta lists). Both KLSE
-code resolution *and* the six checks are one HTTP call per ticker to
-KLSEScreener (~0.3s rate limit each, ~0.25s measured latency per call) — two
-per-ticker passes over the same host, roughly 6–8 min total for a large
-list. Slower than a batched TradingView-sourced version would be, but this
-is the tradeoff for the checks matching the actual chart the link opens.
+**Runtime:** merging 9 lists of `--top 100` typically yields several hundred
+unique tickers (real overlap between volatile/active/high-beta/gainers/volume
+lists; `all_time_high` is small — typically single digits — while
+`at_52w_high` usually adds a couple dozen tickers none of the other lists
+catch). Both KLSE code resolution *and* the six checks are one HTTP call per
+ticker to KLSEScreener (~0.3s rate limit each, ~0.25s measured latency per
+call) — two per-ticker passes over the same host, several minutes total for
+a large list, then a final in-Python filter down to only the stocks passing
+all six checks. Slower than a batched TradingView-sourced version would be,
+but this is the tradeoff for the checks matching the actual chart the link
+opens.
 
 Same unofficial-API caveat as the rest of this project: the TradingView
 scanner endpoint, KLSEScreener's search endpoint, and KLSEScreener's chart

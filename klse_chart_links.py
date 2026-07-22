@@ -1,18 +1,24 @@
 """
 KLSE Chart Links — TradingView Malaysia market movers -> KLSEScreener chart links (HTML)
 
-Pulls 5 TradingView Malaysia market-movers lists (unusual volume, active,
-most volatile, high beta, best performing) via TradingView's public scanner
-API, merges/dedupes the tickers, resolves each to its KLSEScreener numeric
-stock code, and writes a static HTML file of clickable chart links
+Pulls 9 TradingView Malaysia market-movers lists (unusual volume, active,
+most volatile, high beta, best performing, top gainers, top volume,
+all-time high, at 52-week high) via TradingView's public scanner API,
+merges/dedupes the tickers, resolves each to its KLSEScreener numeric stock
+code, and writes a static HTML file of clickable chart links
 (https://www.klsescreener.com/v2/charting/chart/<code>), each with a
 checkbox you can tick off (state persists across reloads via localStorage).
 
 Data sources (all public, unofficial JSON endpoints — no headless browser):
   - TradingView scanner API: https://scanner.tradingview.com/malaysia/scan
     (same endpoint market_movers.py uses; sort fields below were verified
-    against TradingView's own market-movers page descriptions) — used only
-    for the 5 market-movers rankings in step 1.
+    against TradingView's own market-movers page descriptions). Most lists
+    use an explicit sortBy field; "all_time_high" instead uses TradingView's
+    undocumented "preset" field, reproducing one of its own market-movers
+    menu categories; "at_52w_high" uses an extra filter condition (close >=
+    price_52_week_high) since no working preset name could be found for it
+    — see FILTER_LISTS in the code for details. Used only for the 9
+    market-movers rankings in step 1.
   - KLSEScreener's live search box endpoint:
     https://www.klsescreener.com/v2/screener/search/<query> -> [{"code","name"}]
   - KLSEScreener's own chart data feed (the same TradingView Charting
@@ -45,6 +51,7 @@ import logging
 from datetime import datetime
 from pathlib import Path
 import time
+from urllib.parse import quote
 
 import pandas as pd
 import requests
@@ -56,6 +63,7 @@ OUT_DIR = Path("data/klse_links")
 SCANNER_URL = "https://scanner.tradingview.com/malaysia/scan"
 KLSE_SEARCH_URL = "https://www.klsescreener.com/v2/screener/search/{}"
 KLSE_CHART_URL = "https://www.klsescreener.com/v2/charting/chart/{}"
+TV_CHART_URL = "https://www.tradingview.com/chart/?symbol={}"
 KLSE_HISTORY_URL = "https://www.klsescreener.com/v2/trading_view/history"
 KLSE_RATE_LIMIT_SECONDS = 0.3   # be polite to klsescreener (same host for search + history)
 HTTP_HEADERS = {"User-Agent": "Mozilla/5.0"}
@@ -68,6 +76,36 @@ MOVER_LISTS = {
     "most_volatile":  ("Volatility.D",               "desc", "Volatility (D)"),
     "high_beta":      ("beta_1_year",                "desc", "Beta (1Y)"),
     "best_performing":("Perf.Y",                     "desc", "Perf 1Y %"),
+    "top_gainers":    ("change",                     "desc", "Change %"),
+    "top_volume":     ("volume",                     "desc", "Volume"),
+}
+
+# TradingView's scanner also accepts an (undocumented) "preset" field matching
+# its own market-movers menu categories, applying whatever extra filters
+# TradingView's own page uses (e.g. liquidity minimums) — found by inspecting
+# https://www.tradingview.com/markets/stocks-malaysia/market-movers-ath/.
+# Verified this preset works; couldn't find a working preset name for
+# "52-week high" despite extensive trial (its data-fetch config isn't exposed
+# anywhere in the page source) — see FILTER_LISTS below for how that one is
+# reproduced instead.
+PRESET_LISTS = {
+    "all_time_high": "All-Time High",
+}
+
+# Lists built from an extra scanner filter condition (column-to-column
+# comparison) rather than a sort field or preset. "52-week high" has no
+# reachable preset name, but the same result is achievable directly: filter
+# for close >= price_52_week_high (today's close at/above its 52-week high),
+# sorted by volume desc so illiquid/stale-price matches (zero volume today —
+# common for thinly-traded stocks whose "52-week high" is just an old,
+# never-revisited print) sink to the bottom rather than crowding out real
+# breakouts under --top N. Verified live: 0 false positives, sort correctly
+# pushes 32/39 zero-volume rows to the end.
+FILTER_LISTS = {
+    "at_52w_high": (
+        {"left": "close", "operation": "egreater", "right": "price_52_week_high"},
+        "volume", "desc", "At 52-Week High",
+    ),
 }
 
 CHECK_MIN_VOLUME = 2_000_000
@@ -85,6 +123,75 @@ def fetch_movers_list(list_key: str, top_n: int) -> list[dict]:
 
     payload = {
         "filter": [{"left": "is_primary", "operation": "equal", "right": True}],
+        "options": {"lang": "en"},
+        "symbols": {"query": {"types": ["stock"]}, "tickers": []},
+        "columns": columns,
+        "sort": {"sortBy": sort_by, "sortOrder": sort_order},
+        "range": [0, top_n],
+    }
+    try:
+        resp = requests.post(SCANNER_URL, json=payload, timeout=15)
+    except requests.RequestException as e:
+        raise RuntimeError(f"Could not reach TradingView scanner ({SCANNER_URL}): {e}")
+    resp.raise_for_status()
+
+    rows = []
+    for item in resp.json().get("data", []):
+        name, close, volume, description, metric = item["d"]
+        rows.append({
+            "ticker": item["s"],
+            "name": name,
+            "description": description,
+            "metric": metric,
+            "metric_label": label,
+            "source": list_key,
+        })
+    log.info("Scanner: %d tickers for list=%s", len(rows), list_key)
+    return rows
+
+
+def fetch_preset_list(list_key: str, top_n: int) -> list[dict]:
+    """Query TradingView's scanner API using its "preset" field (TradingView's
+    own market-movers category, with whatever extra filters that implies —
+    see PRESET_LISTS above). No explicit sort: the preset determines order."""
+    label = PRESET_LISTS[list_key]
+    payload = {
+        "filter": [{"left": "is_primary", "operation": "equal", "right": True}],
+        "options": {"lang": "en"},
+        "symbols": {"query": {"types": ["stock"]}, "tickers": []},
+        "columns": ["name", "close", "volume", "description"],
+        "preset": list_key,
+        "range": [0, top_n],
+    }
+    try:
+        resp = requests.post(SCANNER_URL, json=payload, timeout=15)
+    except requests.RequestException as e:
+        raise RuntimeError(f"Could not reach TradingView scanner ({SCANNER_URL}): {e}")
+    resp.raise_for_status()
+
+    rows = []
+    for item in resp.json().get("data", []):
+        name, close, volume, description = item["d"]
+        rows.append({
+            "ticker": item["s"],
+            "name": name,
+            "description": description,
+            "metric": None,
+            "metric_label": label,
+            "source": list_key,
+        })
+    log.info("Scanner: %d tickers for list=%s", len(rows), list_key)
+    return rows
+
+
+def fetch_filter_list(list_key: str, top_n: int) -> list[dict]:
+    """Query TradingView's scanner API with an extra filter condition on top
+    of the base is_primary filter (see FILTER_LISTS above)."""
+    extra_filter, sort_by, sort_order, label = FILTER_LISTS[list_key]
+    columns = ["name", "close", "volume", "description", sort_by]
+
+    payload = {
+        "filter": [{"left": "is_primary", "operation": "equal", "right": True}, extra_filter],
         "options": {"lang": "en"},
         "symbols": {"query": {"types": ["stock"]}, "tickers": []},
         "columns": columns,
@@ -283,31 +390,15 @@ def annotate_checks(resolved: list[dict]) -> list[dict]:
 # Step 4 — HTML output
 # ---------------------------------------------------------------------------
 
-def _check_attr(value: bool | None) -> str:
-    """'1'/'0'/'' for the row's data-* attribute (client-side filters treat '' as not-passing)."""
-    return "" if value is None else ("1" if value else "0")
-
-
-# (key, data-attribute suffix, label) for the 6 conditions, in display order.
+# (key, label) for the 6 conditions a stock must pass to appear in the output at all.
 CONDITIONS = [
-    ("bullish", "bullish", "Bullish"),
-    ("above_sma", "sma", "Close > SMA10 & SMA20"),
-    ("volume_ok", "volume", "Volume > 2,000,000"),
-    ("macd_cross", "macd", "MACD golden cross"),
-    ("volume_surge", "volsurge", "Volume > 1.5× previous day"),
-    ("price_up", "priceup", "Close > previous close"),
+    ("bullish", "Bullish Bar (Close > Open)"),
+    ("above_sma", "Close > SMA10 & SMA20"),
+    ("volume_ok", "Volume > 2,000,000"),
+    ("macd_cross", "MACD golden cross"),
+    ("volume_surge", "Volume > 1.5× previous day"),
+    ("price_up", "Close > previous close"),
 ]
-
-
-def _condition_chip(value: bool | None, label: str) -> str:
-    cls = "unk" if value is None else ("ok" if value else "no")
-    mark = "&#8213;" if value is None else ("&#10003;" if value else "&#10007;")
-    return f'<div class="cond"><span class="cond-dot {cls}">{mark}</span><span class="cond-label">{html.escape(label)}</span></div>'
-
-
-def _score_badge(score: int, total: int) -> str:
-    tier = "good" if score >= 5 else ("warn" if score >= 3 else "crit")
-    return f'<span class="score-badge"><span class="score-dot {tier}"></span>{score}/{total}</span>'
 
 
 def build_html(rows: list[dict]) -> str:
@@ -315,32 +406,27 @@ def build_html(rows: list[dict]) -> str:
     body_rows = []
     for row in rows:
         symbol = row["ticker"].split(":", 1)[1] if ":" in row["ticker"] else row["ticker"]
-        url = KLSE_CHART_URL.format(row["code"])
+        klse_url = KLSE_CHART_URL.format(row["code"])
+        tv_url = TV_CHART_URL.format(quote(row["ticker"], safe=""))
         name = html.escape(f"{symbol} — {row['description']}")
         ticker_esc = html.escape(row["ticker"])
         search_text = html.escape(f"{symbol} {row['description']}".lower())
-        score = sum(1 for key, _, _ in CONDITIONS if row.get(key) is True)
-
-        data_attrs = " ".join([f'data-ticker="{ticker_esc}"', f'data-search="{search_text}"', f'data-score="{score}"'] + [
-            f'data-{attr}="{_check_attr(row.get(key))}"' for key, attr, _ in CONDITIONS
-        ])
-        chips = "".join(_condition_chip(row.get(key), label) for key, _, label in CONDITIONS)
         sources = html.escape(", ".join(row["sources"]))
 
-        body_rows.append(f"""      <tr class="row" {data_attrs}>
+        body_rows.append(f"""      <tr class="row" data-ticker="{ticker_esc}" data-search="{search_text}">
         <td class="check-cell"><input type="checkbox" class="review" data-ticker="{ticker_esc}"></td>
-        <td><a class="stock-link" href="{html.escape(url)}" target="_blank" rel="noopener">{name}</a></td>
-        <td>{_score_badge(score, len(CONDITIONS))}</td>
-        <td class="chevron">&#9656;</td>
-      </tr>
-      <tr class="detail">
-        <td colspan="4">
-          <div class="detail-grid">{chips}</div>
+        <td class="note-cell"><button type="button" class="note-btn" data-ticker="{ticker_esc}" title="Add note" aria-label="Add note"><span class="note-icon">&#9998;</span><span class="note-dot"></span></button></td>
+        <td>
+          <a class="stock-link" href="{html.escape(klse_url)}" data-klse-url="{html.escape(klse_url)}" data-tv-url="{html.escape(tv_url)}" target="_blank" rel="noopener">{name}</a>
           <div class="sources-line">From: {sources}</div>
         </td>
       </tr>""")
 
     generated = datetime.now().strftime("%Y-%m-%d %H:%M")
+    legend_items = "\n".join(
+        f'        <div class="legend-item"><span class="legend-check">&#10003;</span>{html.escape(label)}</div>'
+        for _, label in CONDITIONS
+    )
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -404,8 +490,9 @@ def build_html(rows: list[dict]) -> str:
   .header-row {{ display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; }}
   h1 {{ font-size: 1.5rem; font-weight: 600; margin: 0 0 0.25rem; }}
   .meta {{ color: var(--ink-2); font-size: 0.875rem; margin: 0 0 1.25rem; }}
+  .header-actions {{ display: flex; gap: 0.5rem; flex: none; margin-top: 0.15rem; }}
   .theme-toggle {{
-    flex: none; padding: 0.4rem 0.75rem; margin-top: 0.15rem;
+    flex: none; padding: 0.4rem 0.75rem;
     border: 1px solid var(--border); border-radius: 999px;
     background: var(--surface); color: var(--ink-2); font-size: 0.78rem;
     cursor: pointer; font-family: inherit;
@@ -419,15 +506,6 @@ def build_html(rows: list[dict]) -> str:
   }}
   .search:focus {{ outline: 2px solid var(--accent); outline-offset: 1px; }}
 
-  .chips {{ display: flex; flex-wrap: wrap; gap: 0.4rem; margin-bottom: 0.9rem; }}
-  .chip {{
-    display: inline-flex; align-items: center; gap: 0.35rem;
-    padding: 0.35rem 0.7rem; border: 1px solid var(--border); border-radius: 999px;
-    background: var(--surface); color: var(--ink-2); font-size: 0.8rem;
-    cursor: pointer; user-select: none; font-family: inherit;
-  }}
-  .chip[aria-pressed="true"] {{ background: var(--accent); border-color: var(--accent); color: #fff; }}
-
   .bulk-row {{ display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; margin: 0 0 0.6rem; }}
   #counter {{ color: var(--ink-2); font-size: 0.85rem; margin: 0; }}
   .bulk-actions {{ display: flex; gap: 0.4rem; flex: none; }}
@@ -437,6 +515,8 @@ def build_html(rows: list[dict]) -> str:
     cursor: pointer; font-family: inherit;
   }}
   .bulk-btn:hover {{ color: var(--ink); }}
+  .bulk-btn.primary {{ background: var(--accent); border-color: var(--accent); color: #fff; }}
+  .bulk-btn.primary:hover {{ color: #fff; }}
 
   .table-wrap {{ overflow-x: auto; border: 1px solid var(--border); border-radius: 10px; }}
   table {{ width: 100%; border-collapse: collapse; background: var(--surface); }}
@@ -446,48 +526,69 @@ def build_html(rows: list[dict]) -> str:
     color: var(--ink-muted); padding: 0.6rem 0.75rem; border-bottom: 1px solid var(--gridline);
     white-space: nowrap;
   }}
-  th.sortable {{ cursor: pointer; }}
-  th.sortable:hover {{ color: var(--ink-2); }}
-  th.sort-active {{ color: var(--ink); }}
 
-  tr.row {{ border-bottom: 1px solid var(--gridline); cursor: pointer; }}
+  tr.row {{ border-bottom: 1px solid var(--gridline); }}
   tr.row:hover {{ background: var(--chip-bg); }}
   tr.row.checked .stock-link {{ color: var(--ink-muted); text-decoration: line-through; }}
-  tr.row.hidden-row, tr.row.hidden-row + tr.detail {{ display: none; }}
+  tr.row.hidden-row {{ display: none; }}
   td {{ padding: 0.6rem 0.75rem; font-size: 0.9rem; vertical-align: middle; }}
   td.check-cell {{ width: 2rem; }}
   input[type="checkbox"] {{ width: 1.05rem; height: 1.05rem; cursor: pointer; }}
   a.stock-link {{ color: var(--ink); text-decoration: none; font-weight: 500; }}
   a.stock-link:hover {{ color: var(--accent); text-decoration: underline; }}
 
-  td.chevron {{ width: 1.5rem; text-align: center; color: var(--ink-muted); transition: transform 0.15s; }}
-  tr.row.open td.chevron {{ transform: rotate(90deg); }}
-
-  .score-badge {{
-    display: inline-flex; align-items: center; gap: 0.4rem;
-    padding: 0.2rem 0.6rem; border-radius: 999px; border: 1px solid var(--border);
-    font-variant-numeric: tabular-nums; font-weight: 600; font-size: 0.85rem;
+  td.note-cell {{ width: 1.75rem; }}
+  .note-btn {{
+    position: relative; display: inline-flex; align-items: center; justify-content: center;
+    width: 1.6rem; height: 1.6rem; padding: 0; border: none; background: none;
+    color: var(--ink-muted); cursor: pointer; border-radius: 6px;
   }}
-  .score-dot {{ width: 8px; height: 8px; border-radius: 50%; flex: none; }}
-  .score-dot.good {{ background: var(--good); }}
-  .score-dot.warn {{ background: var(--warning); }}
-  .score-dot.crit {{ background: var(--critical); }}
-
-  tr.detail {{ display: none; }}
-  tr.detail.open {{ display: table-row; }}
-  tr.detail td {{ padding: 0.85rem 0.75rem; background: var(--chip-bg); border-bottom: 1px solid var(--gridline); }}
-  .detail-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 0.5rem 1rem; }}
-  .cond {{ display: flex; align-items: center; gap: 0.5rem; font-size: 0.85rem; }}
-  .cond-dot {{
-    display: inline-flex; align-items: center; justify-content: center;
-    width: 16px; height: 16px; border-radius: 50%; flex: none;
-    font-size: 0.6rem; font-weight: bold; color: #fff;
+  .note-btn:hover {{ color: var(--accent); background: var(--chip-bg); }}
+  .note-icon {{ font-size: 0.9rem; }}
+  .note-dot {{
+    display: none; position: absolute; top: 2px; right: 2px;
+    width: 6px; height: 6px; border-radius: 50%; background: var(--accent);
   }}
-  .cond-dot.ok {{ background: var(--good); }}
-  .cond-dot.no {{ background: var(--critical); }}
-  .cond-dot.unk {{ background: var(--ink-muted); }}
-  .cond-label {{ color: var(--ink-2); }}
-  .sources-line {{ margin-top: 0.75rem; font-size: 0.78rem; color: var(--ink-muted); }}
+  .note-btn.has-note .note-dot {{ display: block; }}
+
+  .modal-overlay {{
+    display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.45);
+    align-items: center; justify-content: center; padding: 1rem; z-index: 10;
+  }}
+  .modal-overlay.open {{ display: flex; }}
+  .modal {{
+    width: 100%; max-width: 420px; background: var(--surface); color: var(--ink);
+    border: 1px solid var(--border); border-radius: 10px; padding: 1.1rem;
+    box-shadow: 0 10px 40px rgba(0,0,0,0.25);
+  }}
+  .modal h2 {{ margin: 0 0 0.75rem; font-size: 1rem; font-weight: 600; }}
+  .note-textarea {{
+    width: 100%; padding: 0.6rem 0.7rem; border: 1px solid var(--border); border-radius: 8px;
+    background: var(--page); color: var(--ink); font-size: 0.88rem; font-family: inherit;
+    resize: vertical;
+  }}
+  .note-textarea:focus {{ outline: 2px solid var(--accent); outline-offset: 1px; }}
+  .modal-actions {{ display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 0.85rem; }}
+
+  .sources-line {{ margin-top: 0.15rem; font-size: 0.78rem; color: var(--ink-muted); }}
+
+  .legend {{
+    border: 1px solid var(--border); border-radius: 10px; background: var(--chip-bg);
+    padding: 0.85rem 1rem; margin-bottom: 1rem;
+  }}
+  .legend-title {{
+    margin: 0 0 0.6rem; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.03em;
+    color: var(--ink-muted); font-weight: 600;
+  }}
+  .legend-grid {{
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 0.45rem 1.25rem;
+  }}
+  .legend-item {{ display: flex; align-items: center; gap: 0.5rem; font-size: 0.85rem; color: var(--ink-2); }}
+  .legend-check {{
+    display: inline-flex; align-items: center; justify-content: center; flex: none;
+    width: 16px; height: 16px; border-radius: 50%; background: var(--good);
+    color: #fff; font-size: 0.6rem; font-weight: bold;
+  }}
 
   @media (max-width: 560px) {{
     body {{ padding: 1.25rem 0.6rem 3rem; }}
@@ -498,22 +599,21 @@ def build_html(rows: list[dict]) -> str:
   <div class="wrap">
     <div class="header-row">
       <h1>KLSE Market Movers</h1>
-      <button type="button" class="theme-toggle" id="themeToggle">Theme: System</button>
+      <div class="header-actions">
+        <button type="button" class="theme-toggle" id="sourceToggle">Chart: KLSEScreener</button>
+        <button type="button" class="theme-toggle" id="themeToggle">Theme: System</button>
+      </div>
     </div>
-    <p class="meta">Generated {generated} &middot; {len(rows)} stocks &middot; click a row for the full breakdown
-      of its 6 conditions &middot; "&#8213;" means a condition couldn't be computed (insufficient history
-      or a fetch error).</p>
+    <p class="meta">Generated {generated}</p>
+
+    <div class="legend">
+      <p class="legend-title">Every stock below passes all 6 conditions</p>
+      <div class="legend-grid">
+{legend_items}
+      </div>
+    </div>
 
     <input type="search" class="search" id="search" placeholder="Search ticker or company name&hellip;">
-
-    <div class="chips" role="group" aria-label="Condition filters">
-      <button type="button" class="chip" data-filter="bullish" aria-pressed="false">Bullish</button>
-      <button type="button" class="chip" data-filter="sma" aria-pressed="false">&gt;SMA10&amp;20</button>
-      <button type="button" class="chip" data-filter="volume" aria-pressed="false">Vol&gt;2M</button>
-      <button type="button" class="chip" data-filter="macd" aria-pressed="false">MACD Cross</button>
-      <button type="button" class="chip" data-filter="volsurge" aria-pressed="false">Vol&gt;1.5&times; Prev</button>
-      <button type="button" class="chip" data-filter="priceup" aria-pressed="false">Price&gt;Prev</button>
-    </div>
 
     <div class="bulk-row">
       <div class="bulk-actions">
@@ -528,15 +628,25 @@ def build_html(rows: list[dict]) -> str:
         <thead>
           <tr>
             <th></th>
-            <th class="sortable" data-sort="stock">Stock</th>
-            <th class="sortable" data-sort="score">Score</th>
             <th></th>
+            <th>Stock</th>
           </tr>
         </thead>
         <tbody id="tbody">
 {chr(10).join(body_rows)}
         </tbody>
       </table>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="noteOverlay">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="noteModalTitle">
+      <h2 id="noteModalTitle">Note &mdash; <span id="noteModalTicker"></span></h2>
+      <textarea id="noteText" class="note-textarea" rows="5" placeholder="Add a note for this stock&hellip;"></textarea>
+      <div class="modal-actions">
+        <button type="button" class="bulk-btn" id="noteCancelBtn">Cancel</button>
+        <button type="button" class="bulk-btn primary" id="noteSaveBtn">Save</button>
+      </div>
     </div>
   </div>
   <script>
@@ -565,70 +675,53 @@ def build_html(rows: list[dict]) -> str:
       applyTheme(currentTheme);
     }});
 
+    // Chart-source toggle: KLSEScreener <-> TradingView, persisted so the
+    // choice survives a reload, same pattern as the theme toggle above.
+    const SOURCE_KEY = 'klse_link_source';
+    const sourceToggle = document.getElementById('sourceToggle');
+    const sourceLabels = {{ klse: 'KLSEScreener', tradingview: 'TradingView' }};
+
+    function applySource(source) {{
+      document.querySelectorAll('a.stock-link').forEach(a => {{
+        a.href = source === 'tradingview' ? a.dataset.tvUrl : a.dataset.klseUrl;
+      }});
+      sourceToggle.textContent = 'Chart: ' + sourceLabels[source];
+    }}
+
+    let currentSource = localStorage.getItem(SOURCE_KEY) || 'klse';
+    applySource(currentSource);
+    sourceToggle.addEventListener('click', () => {{
+      currentSource = currentSource === 'klse' ? 'tradingview' : 'klse';
+      localStorage.setItem(SOURCE_KEY, currentSource);
+      applySource(currentSource);
+    }});
+
     const tbody = document.getElementById('tbody');
     const search = document.getElementById('search');
-    const chips = Array.from(document.querySelectorAll('.chip'));
     const counter = document.getElementById('counter');
-    const headers = Array.from(document.querySelectorAll('th.sortable'));
 
-    function rowPairs() {{
-      return Array.from(tbody.querySelectorAll('tr.row')).map(row => [row, row.nextElementSibling]);
+    function rows() {{
+      return Array.from(tbody.querySelectorAll('tr.row'));
     }}
 
     function keyFor(cb) {{ return 'klse_check_' + cb.dataset.ticker; }}
 
     function updateCounter() {{
-      const pairs = rowPairs();
-      const visible = pairs.filter(([row]) => !row.classList.contains('hidden-row'));
       const boxes = Array.from(document.querySelectorAll('input.review'));
       const checked = boxes.filter(cb => cb.checked).length;
-      counter.textContent = checked + ' / ' + boxes.length + ' reviewed · ' + visible.length + ' / ' + pairs.length + ' shown';
+      counter.textContent = checked + ' / ' + boxes.length + ' reviewed';
     }}
 
     function applyFilters() {{
       const term = search.value.trim().toLowerCase();
-      const active = chips.filter(c => c.getAttribute('aria-pressed') === 'true').map(c => c.dataset.filter);
-      rowPairs().forEach(([row]) => {{
-        let show = true;
-        if (term && !row.dataset.search.includes(term)) show = false;
-        for (const f of active) {{
-          if (row.dataset[f] !== '1') show = false;
-        }}
+      rows().forEach(row => {{
+        const show = !term || row.dataset.search.includes(term);
         row.classList.toggle('hidden-row', !show);
       }});
       updateCounter();
     }}
 
     search.addEventListener('input', applyFilters);
-    chips.forEach(chip => chip.addEventListener('click', () => {{
-      chip.setAttribute('aria-pressed', chip.getAttribute('aria-pressed') !== 'true');
-      applyFilters();
-    }}));
-
-    let sortState = {{ key: null, dir: 1 }};
-    function applySort(key) {{
-      sortState.dir = (sortState.key === key) ? -sortState.dir : 1;
-      sortState.key = key;
-      headers.forEach(h => h.classList.toggle('sort-active', h.dataset.sort === key));
-      const pairs = rowPairs();
-      pairs.sort((a, b) => {{
-        const [rowA] = a, [rowB] = b;
-        if (key === 'score') {{
-          return (Number(rowA.dataset.score) - Number(rowB.dataset.score)) * sortState.dir;
-        }}
-        return rowA.dataset.search.localeCompare(rowB.dataset.search) * sortState.dir;
-      }});
-      pairs.forEach(([row, detail]) => {{ tbody.appendChild(row); tbody.appendChild(detail); }});
-    }}
-    headers.forEach(h => h.addEventListener('click', () => applySort(h.dataset.sort)));
-
-    tbody.addEventListener('click', (e) => {{
-      if (e.target.closest('input.review') || e.target.closest('a.stock-link')) return;
-      const row = e.target.closest('tr.row');
-      if (!row) return;
-      row.classList.toggle('open');
-      row.nextElementSibling.classList.toggle('open');
-    }});
 
     function setChecked(cb, checked) {{
       cb.checked = checked;
@@ -641,7 +734,6 @@ def build_html(rows: list[dict]) -> str:
         cb.checked = true;
         cb.closest('tr').classList.add('checked');
       }}
-      cb.addEventListener('click', (e) => e.stopPropagation());
       cb.addEventListener('change', () => {{
         setChecked(cb, cb.checked);
         updateCounter();
@@ -649,7 +741,7 @@ def build_html(rows: list[dict]) -> str:
     }});
 
     function bulkSetVisible(checked) {{
-      rowPairs().forEach(([row]) => {{
+      rows().forEach(row => {{
         if (row.classList.contains('hidden-row')) return;
         const cb = row.querySelector('input.review');
         if (cb) setChecked(cb, checked);
@@ -658,6 +750,64 @@ def build_html(rows: list[dict]) -> str:
     }}
     document.getElementById('selectAllBtn').addEventListener('click', () => bulkSetVisible(true));
     document.getElementById('deselectAllBtn').addEventListener('click', () => bulkSetVisible(false));
+
+    // Per-stock notes: stored in localStorage per ticker, edited via a popup
+    // modal (opened from the pencil icon next to each row's checkbox).
+    function noteKeyFor(ticker) {{ return 'klse_note_' + ticker; }}
+
+    function refreshNoteDot(btn) {{
+      const note = localStorage.getItem(noteKeyFor(btn.dataset.ticker));
+      btn.classList.toggle('has-note', !!note);
+    }}
+
+    document.querySelectorAll('.note-btn').forEach(refreshNoteDot);
+
+    const noteOverlay = document.getElementById('noteOverlay');
+    const noteModalTicker = document.getElementById('noteModalTicker');
+    const noteText = document.getElementById('noteText');
+    let activeNoteBtn = null;
+
+    function openNoteModal(btn) {{
+      activeNoteBtn = btn;
+      noteModalTicker.textContent = btn.dataset.ticker;
+      noteText.value = localStorage.getItem(noteKeyFor(btn.dataset.ticker)) || '';
+      noteOverlay.classList.add('open');
+      noteText.focus();
+    }}
+
+    function closeNoteModal() {{
+      noteOverlay.classList.remove('open');
+      activeNoteBtn = null;
+    }}
+
+    function saveNote() {{
+      if (!activeNoteBtn) return;
+      const key = noteKeyFor(activeNoteBtn.dataset.ticker);
+      const value = noteText.value.trim();
+      if (value) {{
+        localStorage.setItem(key, value);
+      }} else {{
+        localStorage.removeItem(key);
+      }}
+      refreshNoteDot(activeNoteBtn);
+      closeNoteModal();
+    }}
+
+    document.querySelectorAll('.note-btn').forEach(btn => {{
+      btn.addEventListener('click', (e) => {{
+        e.stopPropagation();
+        openNoteModal(btn);
+      }});
+    }});
+
+    document.getElementById('noteSaveBtn').addEventListener('click', saveNote);
+    document.getElementById('noteCancelBtn').addEventListener('click', closeNoteModal);
+    noteOverlay.addEventListener('click', (e) => {{
+      if (e.target === noteOverlay) closeNoteModal();
+    }});
+    document.addEventListener('keydown', (e) => {{
+      if (e.key === 'Escape' && noteOverlay.classList.contains('open')) closeNoteModal();
+    }});
 
     updateCounter();
   </script>
@@ -683,9 +833,14 @@ def run(top_n: int) -> None:
     all_rows = []
     for list_key in MOVER_LISTS:
         all_rows.extend(fetch_movers_list(list_key, top_n))
+    for list_key in PRESET_LISTS:
+        all_rows.extend(fetch_preset_list(list_key, top_n))
+    for list_key in FILTER_LISTS:
+        all_rows.extend(fetch_filter_list(list_key, top_n))
 
+    total_lists = len(MOVER_LISTS) + len(PRESET_LISTS) + len(FILTER_LISTS)
     merged = merge_unique(all_rows)
-    print(f"[merge] {len(merged)} unique tickers from {len(all_rows)} ranked rows across {len(MOVER_LISTS)} lists")
+    print(f"[merge] {len(merged)} unique tickers from {len(all_rows)} ranked rows across {total_lists} lists")
 
     resolved, code_skipped = resolve_all(merged)
     if code_skipped:
@@ -693,9 +848,12 @@ def run(top_n: int) -> None:
 
     resolved = annotate_checks(resolved)
 
-    dated_path = save_html(resolved)
+    qualified = [r for r in resolved if all(r.get(key) is True for key, _ in CONDITIONS)]
+    print(f"[filter] {len(qualified)}/{len(resolved)} stocks passed all {len(CONDITIONS)} conditions")
 
-    print(f"\n[done] {len(resolved)} stock(s) -> {dated_path}")
+    dated_path = save_html(qualified)
+
+    print(f"\n[done] {len(qualified)} stock(s) -> {dated_path}")
 
 
 # ---------------------------------------------------------------------------
