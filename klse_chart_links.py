@@ -1,47 +1,52 @@
 """
-KLSE Chart Links — TradingView Malaysia market movers -> KLSEScreener chart links (HTML)
+KLSE Chart Links — Bursa Malaysia 7-condition screen -> chart links (HTML)
 
-Pulls 9 TradingView Malaysia market-movers lists (unusual volume, active,
-most volatile, high beta, best performing, top gainers, top volume,
-all-time high, at 52-week high) via TradingView's public scanner API,
-merges/dedupes the tickers, resolves each to its KLSEScreener numeric stock
-code, and writes a static HTML file of clickable chart links
+Screens Bursa Malaysia down to the stocks passing seven bullish/momentum
+conditions, resolves each survivor to its KLSEScreener numeric stock code,
+and writes a static HTML file of clickable chart links
 (https://www.klsescreener.com/v2/charting/chart/<code>), each with a
 checkbox you can tick off (state persists across reloads via localStorage).
 
+The seven checks: bullish candle (close > open), the full SMA stack
+(close > SMA10 > SMA20 > SMA60 > SMA200), volume > 5,000,000, a MACD(12,26,9)
+golden cross (MACD line currently above its signal line right now — a state,
+not "crossed on this exact bar"), close > previous day's close, close >=
+RM 0.20, and listed at least 1 year. Only stocks passing all seven are
+written to the HTML — the filtering happens here in Python, so the page is
+already the shortlist.
+
+Two candidate sources (--source):
+  - tradingview (default): ONE scanner request returns both the candidate
+    list and every column the seven checks need (SMA10/20/60/200, MACD.macd,
+    MACD.signal, change, first_bar_time), filtered server-side on
+    volume > CHECK_MIN_VOLUME. No per-ticker fetch loop. ~7 seconds.
+  - klsescreener: the slower chart-exact backup. Merges the 9 market-movers
+    lists below and recomputes every check from KLSEScreener's own daily
+    bars, so the numbers match the chart the link opens exactly. Costs two
+    rate-limited HTTP calls per candidate — several minutes.
+
 Data sources (all public, unofficial JSON endpoints — no headless browser):
   - TradingView scanner API: https://scanner.tradingview.com/malaysia/scan
-    (same endpoint market_movers.py uses; sort fields below were verified
-    against TradingView's own market-movers page descriptions). Most lists
-    use an explicit sortBy field; "all_time_high" instead uses TradingView's
-    undocumented "preset" field, reproducing one of its own market-movers
-    menu categories; "at_52w_high" uses an extra filter condition (close >=
-    price_52_week_high) since no working preset name could be found for it
-    — see FILTER_LISTS in the code for details. Used only for the 9
-    market-movers rankings in step 1.
+    (sort fields below were verified against TradingView's own market-movers
+    page descriptions). Most lists use an explicit sortBy field;
+    "all_time_high" instead uses TradingView's undocumented "preset" field,
+    reproducing one of its own market-movers menu categories; "at_52w_high"
+    uses an extra filter condition (close >= price_52_week_high) since no
+    working preset name could be found for it — see FILTER_LISTS in the code
+    for details. The 9 lists are used only by --source klsescreener.
   - KLSEScreener's live search box endpoint:
     https://www.klsescreener.com/v2/screener/search/<query> -> [{"code","name"}]
   - KLSEScreener's own chart data feed (the same TradingView Charting
     Library UDF endpoint that powers the chart your link opens):
     https://www.klsescreener.com/v2/trading_view/history?symbol=<code>&resolution=D&from=<ts>&to=<ts>
 
-Writes one dated HTML file per run into data/klse_links/ (same data/
-convention as ohlcv_fetcher.py and market_movers.py):
+Writes one dated HTML file per run into data/klse_links/:
     data/klse_links/klse_chart_links_<YYYY-MM-DD>.html  overwritten if rerun same day
 
-For every resolved stock, also pulls ~1.5 years of daily bars from
-KLSEScreener's own chart data feed (not TradingView's — deliberately, so the
-checks match the exact chart the link opens) and computes seven checks —
-bullish candle (close > open), the full SMA stack (close > SMA10 > SMA20 >
-SMA60 > SMA200), volume > 5,000,000, a MACD(12,26,9) golden cross (MACD line
-currently above its signal line right now — a state, not "crossed on this
-exact bar"), close > previous day's close, close >= RM 0.20, and listed at
-least 1 year. Only stocks passing all seven are written to the HTML — the
-filtering happens here in Python, so the page is already the shortlist.
-
 Run:
-    python klse_chart_links.py                       # top 100 per list
+    python klse_chart_links.py                        # default: 1 request, ~7s
     python klse_chart_links.py --top 50
+    python klse_chart_links.py --source klsescreener  # chart-exact backup
 
 For individual, non-commercial use.
 """
@@ -61,8 +66,9 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
                     stream=sys.stderr)
 log = logging.getLogger(__name__)
 
-# dailyRun.bat appends every run to task.log via `>> task.log 2>&1`, so runs
-# stack up in one file and need delimiting. Both banners are 25 chars wide.
+# dailyRun.bat appends every run to data/task.log via `>> data\task.log 2>&1`,
+# so runs stack up in one file and need delimiting. Both banners are 25 chars
+# wide.
 BANNER_START = "######### START #########"
 BANNER_END = "######### END ###########"
 
@@ -77,7 +83,7 @@ def write_banner(text: str) -> None:
 
 def write_blank_lines(count: int) -> None:
     """Blank lines after a run's END banner, so consecutive runs appended to
-    task.log stay visually separated."""
+    data/task.log stay visually separated."""
     sys.stderr.write("\n" * count)
     sys.stderr.flush()
 
@@ -91,7 +97,7 @@ KLSE_RATE_LIMIT_SECONDS = 0.3   # be polite to klsescreener (same host for searc
 HTTP_HEADERS = {"User-Agent": "Mozilla/5.0"}
 
 # Sort/metric field per list, verified against TradingView's own page text
-# (see market_movers.py for the base scanner-POST pattern this extends).
+# (legacy/market_movers.py has the base scanner-POST pattern this extends).
 MOVER_LISTS = {
     "unusual_volume": ("relative_volume_10d_calc", "desc", "Rel. Volume (10d)"),
     "active":         ("Value.Traded",              "desc", "Value Traded"),
@@ -1464,7 +1470,7 @@ if __name__ == "__main__":
     args = p.parse_args()
 
     # The END banner is in a finally block on purpose: a run that dies partway
-    # must still close its block, or every later run in task.log reads as part
+    # must still close its block, or every later run in data/task.log reads as part
     # of the failed one.
     write_banner(BANNER_START)
     try:
