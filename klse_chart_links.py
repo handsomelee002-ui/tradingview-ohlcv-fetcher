@@ -31,13 +31,13 @@ convention as ohlcv_fetcher.py and market_movers.py):
 
 For every resolved stock, also pulls ~1.5 years of daily bars from
 KLSEScreener's own chart data feed (not TradingView's — deliberately, so the
-checks match the exact chart the link opens) and computes six checks —
-bullish candle (close > open), close above BOTH SMA10 and SMA20, volume >
-2,000,000, a MACD(12,26,9) golden cross (MACD line currently above its
-signal line right now — a state, not "crossed on this exact bar"), volume
->= 1.5x the previous day's volume, and close > previous day's close.
-Written as columns in the HTML with a checkbox per column so you can filter
-the page itself (client-side, no rerun needed) rather than via a CLI flag.
+checks match the exact chart the link opens) and computes seven checks —
+bullish candle (close > open), the full SMA stack (close > SMA10 > SMA20 >
+SMA60 > SMA200), volume > 5,000,000, a MACD(12,26,9) golden cross (MACD line
+currently above its signal line right now — a state, not "crossed on this
+exact bar"), close > previous day's close, close >= RM 0.20, and listed at
+least 1 year. Only stocks passing all seven are written to the HTML — the
+filtering happens here in Python, so the page is already the shortlist.
 
 Run:
     python klse_chart_links.py                       # top 100 per list
@@ -48,6 +48,7 @@ For individual, non-commercial use.
 
 import html
 import logging
+import sys
 from datetime import datetime
 from pathlib import Path
 import time
@@ -56,8 +57,29 @@ from urllib.parse import quote
 import pandas as pd
 import requests
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s",
+                    stream=sys.stderr)
 log = logging.getLogger(__name__)
+
+# dailyRun.bat appends every run to task.log via `>> task.log 2>&1`, so runs
+# stack up in one file and need delimiting. Both banners are 25 chars wide.
+BANNER_START = "######### START #########"
+BANNER_END = "######### END ###########"
+
+
+def write_banner(text: str) -> None:
+    """Banners carry no timestamp, so they bypass the log formatter — but they
+    go to the same stream logging uses, and flush, so they cannot drift out of
+    order relative to the log lines they wrap."""
+    sys.stderr.write(text + "\n")
+    sys.stderr.flush()
+
+
+def write_blank_lines(count: int) -> None:
+    """Blank lines after a run's END banner, so consecutive runs appended to
+    task.log stay visually separated."""
+    sys.stderr.write("\n" * count)
+    sys.stderr.flush()
 
 OUT_DIR = Path("data/klse_links")
 SCANNER_URL = "https://scanner.tradingview.com/malaysia/scan"
@@ -108,8 +130,21 @@ FILTER_LISTS = {
     ),
 }
 
-CHECK_MIN_VOLUME = 2_000_000
-CHECK_HISTORY_DAYS = 500  # calendar days back to request; ~330 trading bars, plenty for MACD(12,26,9) to converge
+CHECK_MIN_VOLUME = 5_000_000
+CHECK_MIN_PRICE = 0.20        # ringgit; stocks trading below this are excluded
+CHECK_MIN_LISTED_DAYS = 365   # oldest available bar must be at least this old
+
+# Primary path: one scanner call returns every input all 7 checks need, for the
+# whole Bursa main board, so there is no per-ticker fetch loop at all. The 9
+# market-movers lists below are only used by the --source klsescreener backup:
+# they are 9 orderings of one universe, and every stock that could survive the
+# volume gate is already inside this single screen.
+SCREEN_COLUMNS = [
+    "name", "description", "close", "open", "volume", "change",
+    "SMA10", "SMA20", "SMA60", "SMA200",
+    "MACD.macd", "MACD.signal", "first_bar_time",
+]
+CHECK_HISTORY_DAYS = 500  # calendar days back to request; ~330 trading bars, enough for SMA200 and MACD(12,26,9) to converge
 
 
 # ---------------------------------------------------------------------------
@@ -296,11 +331,9 @@ def resolve_all(merged: dict[str, dict]) -> tuple[list[dict], list[str]]:
 # in the HTML and filterable there, not via a CLI flag.
 # ---------------------------------------------------------------------------
 
-VOLUME_SURGE_MULTIPLE = 1.5   # today's volume must be >= this many times yesterday's
-
 EMPTY_CHECKS = {
-    "bullish": None, "above_sma": None, "volume_ok": None, "macd_cross": None,
-    "volume_surge": None, "price_up": None,
+    "bullish": None, "sma_stack": None, "volume_ok": None, "macd_cross": None,
+    "price_up": None, "price_ok": None, "listed_1y": None,
 }
 
 
@@ -339,18 +372,28 @@ def compute_checks(history: dict) -> dict:
     macd_cross is "golden cross" as a current state — MACD line currently
     above its signal line right now — not "crossed on this exact bar".
 
-    volume_surge/price_up need yesterday's bar too (today vs. previous day),
-    so they're None with only 1 bar of history, same as the others."""
+    sma_stack is the full four-line alignment (close > SMA10 > SMA20 > SMA60 >
+    SMA200), so it needs 200 bars — the strictest history requirement here.
+
+    price_up needs yesterday's bar too (today vs. previous day), so it's None
+    with only 1 bar of history.
+
+    listed_1y uses the oldest bar the feed returned: we always ask for
+    CHECK_HISTORY_DAYS (500) calendar days, so a stock listed more recently
+    than a year ago can only return bars newer than that cutoff."""
     close = pd.Series(history["c"])
     n = len(close)
     bullish = bool(history["c"][-1] > history["o"][-1])
     volume_ok = bool(history["v"][-1] > CHECK_MIN_VOLUME)
+    price_ok = bool(history["c"][-1] >= CHECK_MIN_PRICE)
 
-    above_sma = None
-    if n >= 20:
+    sma_stack = None
+    if n >= 200:
         sma10 = close.rolling(10).mean().iloc[-1]
         sma20 = close.rolling(20).mean().iloc[-1]
-        above_sma = bool(close.iloc[-1] > sma10 and close.iloc[-1] > sma20)
+        sma60 = close.rolling(60).mean().iloc[-1]
+        sma200 = close.rolling(200).mean().iloc[-1]
+        sma_stack = bool(close.iloc[-1] > sma10 > sma20 > sma60 > sma200)
 
     macd_cross = None
     if n >= 35:   # 26-period slow EMA + 9-period signal warm-up
@@ -360,27 +403,120 @@ def compute_checks(history: dict) -> dict:
         signal = macd.ewm(span=9, adjust=False).mean()
         macd_cross = bool(macd.iloc[-1] > signal.iloc[-1])
 
-    volume_surge = None
     price_up = None
     if n >= 2:
-        volume_surge = bool(history["v"][-1] >= VOLUME_SURGE_MULTIPLE * history["v"][-2])
         price_up = bool(history["c"][-1] > history["c"][-2])
 
+    listed_1y = None
+    timestamps = history.get("t")
+    if timestamps:
+        listed_1y = bool(timestamps[0] <= time.time() - CHECK_MIN_LISTED_DAYS * 86400)
+
     return {
-        "bullish": bullish, "above_sma": above_sma, "volume_ok": volume_ok, "macd_cross": macd_cross,
-        "volume_surge": volume_surge, "price_up": price_up,
+        "bullish": bullish, "sma_stack": sma_stack, "volume_ok": volume_ok, "macd_cross": macd_cross,
+        "price_up": price_up, "price_ok": price_ok, "listed_1y": listed_1y,
     }
 
 
+def compute_checks_from_scanner(d: dict) -> dict:
+    """The same 7 checks as compute_checks(), but read straight off TradingView's
+    scanner columns instead of recomputing from raw bars. A column TradingView
+    returns as null (young listings have no SMA200, for example) makes that one
+    check None, matching compute_checks()'s "not enough history" convention.
+
+    'change' is percent change against the previous close, so change > 0 is the
+    same test as close > previous close. 'first_bar_time' is the epoch seconds
+    of the stock's oldest daily bar, which is what dates the listing."""
+    def val(*keys):
+        vals = [d.get(k) for k in keys]
+        return None if any(v is None for v in vals) else vals
+
+    pair = val("close", "open")
+    bullish = bool(pair[0] > pair[1]) if pair else None
+
+    stack = val("close", "SMA10", "SMA20", "SMA60", "SMA200")
+    sma_stack = bool(stack[0] > stack[1] > stack[2] > stack[3] > stack[4]) if stack else None
+
+    vol = val("volume")
+    volume_ok = bool(vol[0] > CHECK_MIN_VOLUME) if vol else None
+
+    macd = val("MACD.macd", "MACD.signal")
+    macd_cross = bool(macd[0] > macd[1]) if macd else None
+
+    chg = val("change")
+    price_up = bool(chg[0] > 0) if chg else None
+
+    px = val("close")
+    price_ok = bool(px[0] >= CHECK_MIN_PRICE) if px else None
+
+    first_bar = val("first_bar_time")
+    listed_1y = (
+        bool(first_bar[0] <= time.time() - CHECK_MIN_LISTED_DAYS * 86400)
+        if first_bar else None
+    )
+
+    return {
+        "bullish": bullish, "sma_stack": sma_stack, "volume_ok": volume_ok,
+        "macd_cross": macd_cross, "price_up": price_up, "price_ok": price_ok,
+        "listed_1y": listed_1y,
+    }
+
+
+def fetch_screen(top_n: int) -> list[dict]:
+    """One scanner call for the whole market, pre-filtered on volume so the
+    response contains only stocks that could pass. Both the filter and the
+    volume_ok check read the same TradingView `volume` field from the same
+    response, so the filter is set to exactly CHECK_MIN_VOLUME with the same
+    strict > operator — verified against a direct comparison to return an
+    identical set. volume_ok is therefore always True here; it stays in
+    CONDITIONS because it is a real condition, is shown in the legend, and is
+    still doing work on the --source klsescreener path, where the filter is
+    TradingView's and the check is KLSEScreener's.
+
+    Returns rows with checks already attached."""
+    payload = {
+        "filter": [
+            {"left": "is_primary", "operation": "equal", "right": True},
+            {"left": "volume", "operation": "greater", "right": CHECK_MIN_VOLUME},
+        ],
+        "options": {"lang": "en"},
+        "symbols": {"query": {"types": ["stock"]}, "tickers": []},
+        "columns": SCREEN_COLUMNS,
+        "sort": {"sortBy": "volume", "sortOrder": "desc"},
+        "range": [0, top_n],
+    }
+    try:
+        resp = requests.post(SCANNER_URL, json=payload, timeout=15)
+    except requests.RequestException as e:
+        raise RuntimeError(f"Could not reach TradingView scanner ({SCANNER_URL}): {e}")
+    resp.raise_for_status()
+
+    rows = []
+    # The response is sorted by volume desc and filtered on the same field, so
+    # it is a prefix of the full Bursa volume ranking — position here is the
+    # stock's market-wide volume rank for the day, not a rank within a subset.
+    for rank, item in enumerate(resp.json().get("data", []), 1):
+        d = dict(zip(SCREEN_COLUMNS, item["d"]))
+        rows.append({
+            "ticker": item["s"],
+            "name": d["name"],
+            "description": d["description"] or d["name"],
+            "source_line": f"#{rank} by volume",
+            **compute_checks_from_scanner(d),
+        })
+    log.info("Scanner screen: %d stocks above the volume floor", len(rows))
+    return rows
+
+
 def annotate_checks(resolved: list[dict]) -> list[dict]:
-    """Adds bullish/above_sma/volume_ok/macd_cross/volume_surge/price_up to every resolved row."""
+    """Adds bullish/sma_stack/volume_ok/macd_cross/price_up/price_ok/listed_1y to every resolved row."""
     annotated = []
     for i, row in enumerate(resolved, 1):
         history = fetch_klse_history(row["code"])
         checks = compute_checks(history) if history else EMPTY_CHECKS
         annotated.append({**row, **checks})
         if i % 25 == 0 or i == len(resolved):
-            print(f"[checks] {i}/{len(resolved)} tickers checked")
+            log.info("Checked %d/%d tickers", i, len(resolved))
         if i < len(resolved):
             time.sleep(KLSE_RATE_LIMIT_SECONDS)
     return annotated
@@ -390,28 +526,52 @@ def annotate_checks(resolved: list[dict]) -> list[dict]:
 # Step 4 — HTML output
 # ---------------------------------------------------------------------------
 
-# (key, label) for the 6 conditions a stock must pass to appear in the output at all.
+# (key, label) for the conditions a stock must pass to appear in the output at all.
 CONDITIONS = [
     ("bullish", "Bullish Bar (Close > Open)"),
-    ("above_sma", "Close > SMA10 & SMA20"),
-    ("volume_ok", "Volume > 2,000,000"),
+    ("sma_stack", "Close > 四线上扬"),
+    ("volume_ok", "Volume > 5,000,000"),
     ("macd_cross", "MACD golden cross"),
-    ("volume_surge", "Volume > 1.5× previous day"),
     ("price_up", "Close > previous close"),
+    ("price_ok", "Price >= RM 0.20"),
+    ("listed_1y", "Listed at least 1 year"),
 ]
 
 
-def build_html(rows: list[dict]) -> str:
+def format_run_note(stats: dict | None) -> str:
+    """Run summary for the page header: how many stocks survived, out of how
+    many screened, from which vendor. Returns '' when stats aren't supplied,
+    so the page still builds.
+
+    Deliberately omits the condition count (the legend card right below
+    already states it) and the HTTP request count (implementation detail —
+    nothing a reader of the watchlist would act on)."""
+    if not stats:
+        return ""
+    return (
+        f"{stats['passed']} passed out of {stats['screened']} "
+        f"from {html.escape(stats['source'])}."
+    )
+
+
+def build_html(rows: list[dict], stats: dict | None = None) -> str:
     rows = sorted(rows, key=lambda r: r["ticker"])
     body_rows = []
     for row in rows:
         symbol = row["ticker"].split(":", 1)[1] if ":" in row["ticker"] else row["ticker"]
-        klse_url = KLSE_CHART_URL.format(row["code"])
         tv_url = TV_CHART_URL.format(quote(row["ticker"], safe=""))
+        # No KLSEScreener code (lookup failed, or a TradingView-only symbol):
+        # point the KLSEScreener toggle at TradingView rather than a dead link.
+        klse_url = KLSE_CHART_URL.format(row["code"]) if row.get("code") else tv_url
         name = html.escape(row["description"])
         ticker_esc = html.escape(row["ticker"])
         search_text = html.escape(f"{symbol} {row['description']}".lower())
-        sources = html.escape(", ".join(row["sources"]))
+        # The screen path supplies its own complete label (a volume rank, which
+        # "From:" would read wrong in front of); the market-movers path still
+        # names the lists a stock came from.
+        source_line = html.escape(
+            row.get("source_line") or f"From: {', '.join(row.get('sources', []))}"
+        )
 
         body_rows.append(f"""      <tr class="row" data-ticker="{ticker_esc}" data-search="{search_text}">
         <td class="check-cell"><input type="checkbox" class="review" data-ticker="{ticker_esc}"></td>
@@ -421,11 +581,13 @@ def build_html(rows: list[dict]) -> str:
         </td>
         <td>
           <a class="stock-link" href="{html.escape(klse_url)}" data-klse-url="{html.escape(klse_url)}" data-tv-url="{html.escape(tv_url)}" target="_blank" rel="noopener">{name}</a>
-          <div class="sources-line">From: {sources}</div>
+          <div class="sources-line">{source_line}</div>
         </td>
       </tr>""")
 
     generated = datetime.now().strftime("%Y-%m-%d %H:%M")
+    run_note = format_run_note(stats)
+    meta_line = f"Generated {generated}." + (f"<br>{run_note}" if run_note else "")
     legend_items = "\n".join(
         f'        <div class="legend-item"><span class="legend-check">&#10003;</span>{html.escape(label)}</div>'
         for _, label in CONDITIONS
@@ -720,10 +882,10 @@ def build_html(rows: list[dict]) -> str:
         <button type="button" class="theme-toggle" id="themeToggle">Theme: System</button>
       </div>
     </div>
-    <p class="meta">Generated {generated}</p>
+    <p class="meta">{meta_line}</p>
 
     <div class="legend">
-      <p class="legend-title">Every stock below passes all 6 conditions</p>
+      <p class="legend-title">Every stock below passes all {len(CONDITIONS)} conditions</p>
       <div class="legend-grid">
 {legend_items}
       </div>
@@ -1205,12 +1367,12 @@ def build_html(rows: list[dict]) -> str:
 """
 
 
-def save_html(rows: list[dict]) -> Path:
+def save_html(rows: list[dict], stats: dict | None = None) -> Path:
     """Writes a dated daily snapshot into OUT_DIR (overwritten if rerun same day)."""
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     dated_path = OUT_DIR / f"klse_chart_links_{datetime.now():%Y-%m-%d}.html"
-    dated_path.write_text(build_html(rows), encoding="utf-8")
-    log.info("Saved %d links -> %s", len(rows), dated_path)
+    dated_path.write_text(build_html(rows, stats), encoding="utf-8")
+    log.info("[DONE] Saved %d stock(s) -> %s", len(rows), dated_path)
     return dated_path
 
 
@@ -1218,7 +1380,23 @@ def save_html(rows: list[dict]) -> Path:
 # Run
 # ---------------------------------------------------------------------------
 
-def run(top_n: int) -> None:
+def passes_all(row: dict) -> bool:
+    return all(row.get(key) is True for key, _ in CONDITIONS)
+
+
+def run_tradingview(top_n: int) -> tuple[list[dict], dict]:
+    """Primary path: one scanner call for candidates *and* checks."""
+    candidates = fetch_screen(top_n)
+    qualified = [r for r in candidates if passes_all(r)]
+    stats = {"screened": len(candidates), "passed": len(qualified), "source": "TradingView"}
+    return qualified, stats
+
+
+def run_klsescreener(top_n: int) -> tuple[list[dict], dict]:
+    """Backup path: the 9 market-movers lists, with every check recomputed from
+    KLSEScreener's own bars. Kept because it is the only path whose numbers are
+    guaranteed to match a KLSEScreener chart exactly, but it costs two
+    rate-limited HTTP calls per candidate instead of one call in total."""
     all_rows = []
     for list_key in MOVER_LISTS:
         all_rows.extend(fetch_movers_list(list_key, top_n))
@@ -1229,20 +1407,43 @@ def run(top_n: int) -> None:
 
     total_lists = len(MOVER_LISTS) + len(PRESET_LISTS) + len(FILTER_LISTS)
     merged = merge_unique(all_rows)
-    print(f"[merge] {len(merged)} unique tickers from {len(all_rows)} ranked rows across {total_lists} lists")
+    log.info("Merged %d unique tickers from %d ranked rows across %d lists",
+             len(merged), len(all_rows), total_lists)
 
     resolved, code_skipped = resolve_all(merged)
     if code_skipped:
-        print(f"[skipped] {len(code_skipped)} ticker(s) had no KLSEScreener code match: {', '.join(code_skipped)}")
+        log.warning("%d ticker(s) had no KLSEScreener code match: %s",
+                    len(code_skipped), ", ".join(code_skipped))
 
     resolved = annotate_checks(resolved)
 
-    qualified = [r for r in resolved if all(r.get(key) is True for key, _ in CONDITIONS)]
-    print(f"[filter] {len(qualified)}/{len(resolved)} stocks passed all {len(CONDITIONS)} conditions")
+    qualified = [r for r in resolved if passes_all(r)]
+    stats = {"screened": len(resolved), "passed": len(qualified), "source": "KLSEScreener"}
+    return qualified, stats
 
-    dated_path = save_html(qualified)
 
-    print(f"\n[done] {len(qualified)} stock(s) -> {dated_path}")
+def run(top_n: int, source: str = "tradingview") -> None:
+    qualified, stats = run_tradingview(top_n) if source == "tradingview" else run_klsescreener(top_n)
+
+    # Chart links need KLSEScreener's numeric code, but only for stocks that
+    # already qualified — resolving the whole candidate list first was most of
+    # the old runtime. Rows that fail to resolve keep working: build_html falls
+    # back to the TradingView link for them.
+    for row in qualified:
+        if row.get("code"):
+            continue
+        symbol = row["ticker"].split(":", 1)[1] if ":" in row["ticker"] else row["ticker"]
+        row["code"] = resolve_klse_code(symbol)
+        if not row["code"]:
+            log.warning("%s: no KLSEScreener code; link falls back to TradingView", row["ticker"])
+        time.sleep(KLSE_RATE_LIMIT_SECONDS)
+
+    unresolved = [r["ticker"] for r in qualified if not r.get("code")]
+    if unresolved:
+        log.warning("%d qualifier(s) link to TradingView only: %s",
+                    len(unresolved), ", ".join(unresolved))
+
+    save_html(qualified, stats)
 
 
 # ---------------------------------------------------------------------------
@@ -1253,12 +1454,24 @@ if __name__ == "__main__":
     import argparse
 
     p = argparse.ArgumentParser(description="TradingView Malaysia market movers -> KLSEScreener chart links (HTML)")
-    p.add_argument("--top", type=int, default=100,
-                   help="How many tickers to take per list before merging (default 100)")
+    p.add_argument("--top", type=int, default=500,
+                   help="Cap on candidates: the whole screen for --source tradingview, "
+                        "or per-list before merging for --source klsescreener (default 500)")
+    p.add_argument("--source", choices=["tradingview", "klsescreener"], default="tradingview",
+                   help="Where candidates and checks come from. 'tradingview' (default) is one "
+                        "request total; 'klsescreener' is the slower backup that recomputes every "
+                        "check from KLSEScreener's own bars (default tradingview)")
     args = p.parse_args()
 
+    # The END banner is in a finally block on purpose: a run that dies partway
+    # must still close its block, or every later run in task.log reads as part
+    # of the failed one.
+    write_banner(BANNER_START)
     try:
-        run(args.top)
+        run(args.top, args.source)
     except (ValueError, RuntimeError, requests.RequestException) as e:
-        print(f"[error] {e}")
+        log.error("%s", e)
         raise SystemExit(1)
+    finally:
+        write_banner(BANNER_END)
+        write_blank_lines(2)
