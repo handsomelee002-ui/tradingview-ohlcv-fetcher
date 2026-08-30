@@ -1,0 +1,890 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>KLSE Market Movers — Chart Links</title>
+<style>
+  :root {
+    --surface: #fcfcfb;
+    --page: #f9f9f7;
+    --ink: #0b0b0b;
+    --ink-2: #52514e;
+    --ink-muted: #898781;
+    --gridline: #e1e0d9;
+    --border: rgba(11,11,11,0.10);
+    --accent: #2a78d6;
+    --good: #0ca30c;
+    --warning: #c98500;
+    --critical: #d03b3b;
+    --chip-bg: #f2f1ee;
+    --decision-buy-bg: #a8d8b9;
+    --decision-buy-ink: #163d2b;
+    --decision-watch-bg: #f3c481;
+    --decision-watch-ink: #3f2400;
+    --decision-ignore-bg: #e78f8f;
+    --decision-ignore-ink: #6b1f1f;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --surface: #1a1a19;
+      --page: #0d0d0d;
+      --ink: #ffffff;
+      --ink-2: #c3c2b7;
+      --ink-muted: #898781;
+      --gridline: #2c2c2a;
+      --border: rgba(255,255,255,0.10);
+      --accent: #3987e5;
+      --good: #0ca30c;
+      --warning: #fab219;
+      --critical: #e66767;
+      --chip-bg: #242422;
+      --decision-buy-bg: #a8d8b9;
+      --decision-buy-ink: #163d2b;
+      --decision-watch-bg: #f3c481;
+      --decision-watch-ink: #3f2400;
+      --decision-ignore-bg: #e78f8f;
+      --decision-ignore-ink: #6b1f1f;
+    }
+  }
+  /* Explicit override from the in-page toggle — wins over prefers-color-scheme
+     in both directions (a [data-theme] rule is more specific than the bare
+     :root inside the media query above, regardless of source order). */
+  :root[data-theme="dark"] {
+    --surface: #1a1a19; --page: #0d0d0d; --ink: #ffffff; --ink-2: #c3c2b7;
+    --ink-muted: #898781; --gridline: #2c2c2a; --border: rgba(255,255,255,0.10);
+    --accent: #3987e5; --good: #0ca30c; --warning: #fab219; --critical: #e66767;
+    --chip-bg: #242422;
+    --decision-buy-bg: #a8d8b9; --decision-buy-ink: #163d2b;
+    --decision-watch-bg: #f3c481; --decision-watch-ink: #3f2400;
+    --decision-ignore-bg: #e78f8f; --decision-ignore-ink: #6b1f1f;
+  }
+  :root[data-theme="light"] {
+    --surface: #fcfcfb; --page: #f9f9f7; --ink: #0b0b0b; --ink-2: #52514e;
+    --ink-muted: #898781; --gridline: #e1e0d9; --border: rgba(11,11,11,0.10);
+    --accent: #2a78d6; --good: #0ca30c; --warning: #c98500; --critical: #d03b3b;
+    --chip-bg: #f2f1ee;
+    --decision-buy-bg: #a8d8b9; --decision-buy-ink: #163d2b;
+    --decision-watch-bg: #f3c481; --decision-watch-ink: #3f2400;
+    --decision-ignore-bg: #e78f8f; --decision-ignore-ink: #6b1f1f;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    background: var(--page); color: var(--ink);
+    margin: 0; padding: 2rem 1rem 4rem;
+  }
+  .wrap { max-width: 900px; margin: 0 auto; }
+  .header-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; }
+  h1 { font-size: 1.5rem; font-weight: 600; margin: 0 0 0.25rem; }
+  .meta { color: var(--ink-2); font-size: 0.875rem; margin: 0 0 1.25rem; }
+  .header-actions { display: flex; gap: 0.5rem; flex: none; margin-top: 0.15rem; }
+  .theme-toggle {
+    flex: none; padding: 0.4rem 0.75rem;
+    border: 1px solid var(--border); border-radius: 999px;
+    background: var(--surface); color: var(--ink-2); font-size: 0.78rem;
+    cursor: pointer; font-family: inherit;
+  }
+  .theme-toggle:hover { color: var(--ink); }
+
+  .search {
+    width: 100%; padding: 0.55rem 0.8rem; margin-bottom: 0.75rem;
+    border: 1px solid var(--border); border-radius: 8px;
+    background: var(--surface); color: var(--ink); font-size: 0.9rem;
+  }
+  .search:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+  .bulk-row { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; margin: 0 0 0.6rem; }
+  #counter { color: var(--ink-2); font-size: 0.85rem; margin: 0; }
+  .bulk-actions { display: flex; gap: 0.4rem; flex: none; }
+  .bulk-btn {
+    padding: 0.3rem 0.65rem; border: 1px solid var(--border); border-radius: 999px;
+    background: var(--surface); color: var(--ink-2); font-size: 0.78rem;
+    cursor: pointer; font-family: inherit;
+  }
+  .bulk-btn:hover { color: var(--ink); }
+  .bulk-btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .bulk-btn.primary:hover { color: #fff; }
+
+  .table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 10px; }
+  table { width: 100%; border-collapse: collapse; background: var(--surface); }
+  thead th {
+    position: sticky; top: 0; background: var(--surface); text-align: left;
+    font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.03em;
+    color: var(--ink-muted); padding: 0.6rem 0.75rem; border-bottom: 1px solid var(--gridline);
+    white-space: nowrap;
+  }
+
+  tr.row { border-bottom: 1px solid var(--gridline); }
+  tr.row:hover { background: var(--chip-bg); }
+  tr.row.checked .stock-link { color: var(--ink-muted); text-decoration: line-through; }
+  tr.row.hidden-row { display: none; }
+  td { padding: 0.6rem 0.75rem; font-size: 0.9rem; vertical-align: middle; }
+  td.check-cell { width: 2rem; }
+  input[type="checkbox"] { width: 1.05rem; height: 1.05rem; cursor: pointer; }
+  a.stock-link { color: var(--ink); text-decoration: none; font-weight: 500; }
+  a.stock-link:hover { color: var(--accent); text-decoration: underline; }
+
+  td.note-cell { width: 1.75rem; }
+  .note-btn {
+    position: relative; display: inline-flex; align-items: center; justify-content: center;
+    width: 1.6rem; height: 1.6rem; padding: 0; border: none; background: none;
+    color: var(--ink-muted); cursor: pointer; border-radius: 6px;
+  }
+  .note-btn:hover { color: var(--accent); background: var(--chip-bg); }
+  .note-icon { font-size: 0.9rem; }
+  .note-dot {
+    display: none; position: absolute; top: 2px; right: 2px;
+    width: 6px; height: 6px; border-radius: 50%; background: var(--accent);
+  }
+  .note-btn.has-note .note-dot { display: block; }
+
+  td.decision-cell { width: 1%; white-space: nowrap; }
+  .decision-summary {
+    display: inline-flex; align-items: center; justify-content: center;
+    min-height: 1.75rem; min-width: 5.5rem; padding: 0.25rem 0.55rem;
+    border: 1px solid var(--border); border-radius: 999px;
+    background: var(--surface); color: var(--ink-muted);
+    cursor: pointer; font: inherit; font-size: 0.72rem;
+  }
+  .decision-summary:hover { color: var(--ink); border-color: currentColor; }
+  .decision-summary.buy {
+    background: var(--decision-buy-bg); border-color: transparent;
+    color: var(--decision-buy-ink);
+  }
+  .decision-summary.watch {
+    background: var(--decision-watch-bg); border-color: transparent;
+    color: var(--decision-watch-ink);
+  }
+  .decision-summary.ignore {
+    background: var(--decision-ignore-bg); border-color: transparent;
+    color: var(--decision-ignore-ink);
+  }
+  tr.row.ignored .stock-link { color: var(--ink-muted); }
+  tr.row.ignored .sources-line { opacity: 0.65; }
+
+  .modal-overlay {
+    display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.45);
+    align-items: center; justify-content: center; padding: 1rem; z-index: 10;
+  }
+  .modal-overlay.open { display: flex; }
+  .modal {
+    width: 100%; max-width: 420px; background: var(--surface); color: var(--ink);
+    border: 1px solid var(--border); border-radius: 10px; padding: 1.1rem;
+    box-shadow: 0 10px 40px rgba(0,0,0,0.25);
+  }
+  .modal h2 { margin: 0 0 0.75rem; font-size: 1rem; font-weight: 600; }
+  .note-textarea {
+    width: 100%; padding: 0.6rem 0.7rem; border: 1px solid var(--border); border-radius: 8px;
+    background: var(--page); color: var(--ink); font-size: 0.88rem; font-family: inherit;
+    resize: vertical;
+  }
+  .note-textarea:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .modal-actions { display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 0.85rem; }
+
+  .calendar-modal { max-width: 450px; }
+  .calendar-help { margin: -0.35rem 0 0.8rem; color: var(--ink-2); font-size: 0.8rem; }
+  .calendar-nav { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; margin-bottom: 0.55rem; }
+  .calendar-nav-btn {
+    width: 2rem; height: 2rem; padding: 0; border: 1px solid var(--border);
+    border-radius: 999px; background: var(--surface); color: var(--ink);
+    cursor: pointer; font: inherit;
+  }
+  .calendar-month { font-size: 0.92rem; font-weight: 600; }
+  .calendar-weekdays, .calendar-grid {
+    display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 0.3rem;
+  }
+  .calendar-weekdays { margin-bottom: 0.3rem; }
+  .calendar-weekdays span {
+    text-align: center; color: var(--ink-muted); font-size: 0.67rem; text-transform: uppercase;
+  }
+  .calendar-day {
+    aspect-ratio: 1; min-width: 0; padding: 0; border: 1px solid transparent;
+    border-radius: 8px; background: var(--chip-bg); color: var(--ink);
+    cursor: pointer; font: inherit; font-size: 0.78rem; position: relative;
+  }
+  .calendar-day:hover { border-color: var(--accent); }
+  .calendar-day.today::after {
+    content: ""; position: absolute; bottom: 3px; left: 50%; transform: translateX(-50%);
+    width: 4px; height: 4px; border-radius: 50%; background: currentColor;
+  }
+  .calendar-day.buy {
+    background: var(--decision-buy-bg); border-color: transparent;
+    color: var(--decision-buy-ink);
+  }
+  .calendar-day.watch {
+    background: var(--decision-watch-bg); border-color: transparent;
+    color: var(--decision-watch-ink);
+  }
+  .calendar-day.ignore {
+    background: var(--decision-ignore-bg); border-color: transparent;
+    color: var(--decision-ignore-ink);
+  }
+  .calendar-day.selected { outline: 3px solid var(--accent); outline-offset: 1px; }
+  .calendar-blank { aspect-ratio: 1; }
+  .decision-editor {
+    border-top: 1px solid var(--gridline); margin-top: 0.85rem; padding-top: 0.8rem;
+  }
+  .selected-date { margin: 0 0 0.55rem; font-size: 0.85rem; color: var(--ink-2); }
+  .status-options { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.4rem; }
+  .status-option input { position: absolute; opacity: 0; pointer-events: none; }
+  .status-option span {
+    display: block; padding: 0.42rem 0.35rem; border: 1px solid var(--border);
+    border-radius: 8px; text-align: center; color: var(--ink-2);
+    cursor: pointer; font-size: 0.8rem;
+  }
+  .status-option input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .status-option.buy input:checked + span {
+    background: var(--decision-buy-bg); border-color: transparent;
+    color: var(--decision-buy-ink); font-weight: 600;
+  }
+  .status-option.watch input:checked + span {
+    background: var(--decision-watch-bg); border-color: transparent;
+    color: var(--decision-watch-ink); font-weight: 600;
+  }
+  .status-option.ignore input:checked + span {
+    background: var(--decision-ignore-bg); border-color: transparent;
+    color: var(--decision-ignore-ink); font-weight: 600;
+  }
+  .status-option input:disabled + span { cursor: not-allowed; opacity: 0.45; }
+  .calendar-status { min-height: 1.2rem; margin: 0.55rem 0 0; font-size: 0.76rem; color: var(--ink-2); }
+  .destructive-actions { display: flex; gap: 0.4rem; margin-right: auto; }
+  .delete-btn { color: var(--critical); }
+  .delete-btn[hidden] { display: none; }
+  button:disabled { cursor: not-allowed; opacity: 0.5; }
+
+  .sources-line { margin-top: 0.15rem; font-size: 0.78rem; color: var(--ink-muted); }
+
+  .legend {
+    border: 1px solid var(--border); border-radius: 10px; background: var(--chip-bg);
+    padding: 0.85rem 1rem; margin-bottom: 1rem;
+  }
+  .legend-title {
+    margin: 0 0 0.6rem; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.03em;
+    color: var(--ink-muted); font-weight: 600;
+  }
+  .legend-grid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 0.45rem 1.25rem;
+  }
+  .legend-item { display: flex; align-items: center; gap: 0.5rem; font-size: 0.85rem; color: var(--ink-2); }
+  .legend-check {
+    display: inline-flex; align-items: center; justify-content: center; flex: none;
+    width: 16px; height: 16px; border-radius: 50%; background: var(--good);
+    color: #fff; font-size: 0.6rem; font-weight: bold;
+  }
+
+  @media (max-width: 560px) {
+    body { padding: 1.25rem 0.6rem 3rem; }
+  }
+</style>
+</head>
+<body>
+  <div style="max-width:920px;margin:0 auto 0;padding:10px 16px;font:13px/1.5 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#52514e;background:#f2f1ee;border-bottom:1px solid rgba(11,11,11,0.10);text-align:center">
+    Static demo snapshot from a single run on <strong>2026-08-18</strong>. Not live &mdash; regenerate locally with
+    <code>python klse_chart_links.py</code>. Educational use only, not investment advice.
+  </div>
+  <div class="wrap">
+    <div class="header-row">
+      <h1>KLSE Market Movers</h1>
+      <div class="header-actions">
+        <button type="button" class="theme-toggle" id="sourceToggle">Chart: KLSEScreener</button>
+        <button type="button" class="theme-toggle" id="themeToggle">Theme: System</button>
+      </div>
+    </div>
+    <p class="meta">Generated 2026-08-18 17:24.<br>10 passed out of 121 from TradingView.</p>
+
+    <div class="legend">
+      <p class="legend-title">Every stock below passes all 7 conditions</p>
+      <div class="legend-grid">
+        <div class="legend-item"><span class="legend-check">&#10003;</span>Bullish Bar (Close &gt; Open)</div>
+        <div class="legend-item"><span class="legend-check">&#10003;</span>Close &gt; 四线上扬</div>
+        <div class="legend-item"><span class="legend-check">&#10003;</span>Volume &gt; 5,000,000</div>
+        <div class="legend-item"><span class="legend-check">&#10003;</span>MACD golden cross</div>
+        <div class="legend-item"><span class="legend-check">&#10003;</span>Close &gt; previous close</div>
+        <div class="legend-item"><span class="legend-check">&#10003;</span>Price &gt;= RM 0.20</div>
+        <div class="legend-item"><span class="legend-check">&#10003;</span>Listed at least 1 year</div>
+      </div>
+    </div>
+
+    <input type="search" class="search" id="search" placeholder="Search ticker or company name&hellip;">
+
+    <div class="bulk-row">
+      <div class="bulk-actions">
+        <button type="button" class="bulk-btn" id="selectAllBtn">Select all</button>
+        <button type="button" class="bulk-btn" id="deselectAllBtn">Deselect all</button>
+      </div>
+      <p id="counter"></p>
+    </div>
+
+    <div class="table-wrap">
+      <table id="movers">
+        <thead>
+          <tr>
+            <th></th>
+            <th></th>
+            <th>Decision dates</th>
+            <th>Stock</th>
+          </tr>
+        </thead>
+        <tbody id="tbody">
+      <tr class="row" data-ticker="MYX:CNERGEN" data-search="cnergen cnergenz bhd.">
+        <td class="check-cell"><input type="checkbox" class="review" data-ticker="MYX:CNERGEN"></td>
+        <td class="note-cell"><button type="button" class="note-btn" data-ticker="MYX:CNERGEN" title="Add note" aria-label="Add note"><span class="note-icon">&#9998;</span><span class="note-dot"></span></button></td>
+        <td class="decision-cell">
+          <button type="button" class="decision-summary" data-ticker="MYX:CNERGEN" data-company="Cnergenz Bhd." aria-label="Open decision calendar">Set decision</button>
+        </td>
+        <td>
+          <a class="stock-link" href="https://www.klsescreener.com/v2/charting/chart/0246" data-klse-url="https://www.klsescreener.com/v2/charting/chart/0246" data-tv-url="https://www.tradingview.com/chart/?symbol=MYX%3ACNERGEN" target="_blank" rel="noopener">Cnergenz Bhd.</a>
+          <div class="sources-line">#72 by volume</div>
+        </td>
+      </tr>
+      <tr class="row" data-ticker="MYX:HENGYUAN" data-search="hengyuan hengyuan refining company bhd">
+        <td class="check-cell"><input type="checkbox" class="review" data-ticker="MYX:HENGYUAN"></td>
+        <td class="note-cell"><button type="button" class="note-btn" data-ticker="MYX:HENGYUAN" title="Add note" aria-label="Add note"><span class="note-icon">&#9998;</span><span class="note-dot"></span></button></td>
+        <td class="decision-cell">
+          <button type="button" class="decision-summary" data-ticker="MYX:HENGYUAN" data-company="Hengyuan Refining Company Bhd" aria-label="Open decision calendar">Set decision</button>
+        </td>
+        <td>
+          <a class="stock-link" href="https://www.klsescreener.com/v2/charting/chart/4324" data-klse-url="https://www.klsescreener.com/v2/charting/chart/4324" data-tv-url="https://www.tradingview.com/chart/?symbol=MYX%3AHENGYUAN" target="_blank" rel="noopener">Hengyuan Refining Company Bhd</a>
+          <div class="sources-line">#75 by volume</div>
+        </td>
+      </tr>
+      <tr class="row" data-ticker="MYX:ICTZONE" data-search="ictzone ict zone asia bhd.">
+        <td class="check-cell"><input type="checkbox" class="review" data-ticker="MYX:ICTZONE"></td>
+        <td class="note-cell"><button type="button" class="note-btn" data-ticker="MYX:ICTZONE" title="Add note" aria-label="Add note"><span class="note-icon">&#9998;</span><span class="note-dot"></span></button></td>
+        <td class="decision-cell">
+          <button type="button" class="decision-summary" data-ticker="MYX:ICTZONE" data-company="ICT Zone Asia Bhd." aria-label="Open decision calendar">Set decision</button>
+        </td>
+        <td>
+          <a class="stock-link" href="https://www.klsescreener.com/v2/charting/chart/0358" data-klse-url="https://www.klsescreener.com/v2/charting/chart/0358" data-tv-url="https://www.tradingview.com/chart/?symbol=MYX%3AICTZONE" target="_blank" rel="noopener">ICT Zone Asia Bhd.</a>
+          <div class="sources-line">#52 by volume</div>
+        </td>
+      </tr>
+      <tr class="row" data-ticker="MYX:JAG" data-search="jag jag berhad">
+        <td class="check-cell"><input type="checkbox" class="review" data-ticker="MYX:JAG"></td>
+        <td class="note-cell"><button type="button" class="note-btn" data-ticker="MYX:JAG" title="Add note" aria-label="Add note"><span class="note-icon">&#9998;</span><span class="note-dot"></span></button></td>
+        <td class="decision-cell">
+          <button type="button" class="decision-summary" data-ticker="MYX:JAG" data-company="JAG Berhad" aria-label="Open decision calendar">Set decision</button>
+        </td>
+        <td>
+          <a class="stock-link" href="https://www.klsescreener.com/v2/charting/chart/0024" data-klse-url="https://www.klsescreener.com/v2/charting/chart/0024" data-tv-url="https://www.tradingview.com/chart/?symbol=MYX%3AJAG" target="_blank" rel="noopener">JAG Berhad</a>
+          <div class="sources-line">#32 by volume</div>
+        </td>
+      </tr>
+      <tr class="row" data-ticker="MYX:JTGROUP" data-search="jtgroup jati tinggi group bhd">
+        <td class="check-cell"><input type="checkbox" class="review" data-ticker="MYX:JTGROUP"></td>
+        <td class="note-cell"><button type="button" class="note-btn" data-ticker="MYX:JTGROUP" title="Add note" aria-label="Add note"><span class="note-icon">&#9998;</span><span class="note-dot"></span></button></td>
+        <td class="decision-cell">
+          <button type="button" class="decision-summary" data-ticker="MYX:JTGROUP" data-company="Jati Tinggi Group Bhd" aria-label="Open decision calendar">Set decision</button>
+        </td>
+        <td>
+          <a class="stock-link" href="https://www.klsescreener.com/v2/charting/chart/0292" data-klse-url="https://www.klsescreener.com/v2/charting/chart/0292" data-tv-url="https://www.tradingview.com/chart/?symbol=MYX%3AJTGROUP" target="_blank" rel="noopener">Jati Tinggi Group Bhd</a>
+          <div class="sources-line">#33 by volume</div>
+        </td>
+      </tr>
+      <tr class="row" data-ticker="MYX:KGB" data-search="kgb kelington group bhd.">
+        <td class="check-cell"><input type="checkbox" class="review" data-ticker="MYX:KGB"></td>
+        <td class="note-cell"><button type="button" class="note-btn" data-ticker="MYX:KGB" title="Add note" aria-label="Add note"><span class="note-icon">&#9998;</span><span class="note-dot"></span></button></td>
+        <td class="decision-cell">
+          <button type="button" class="decision-summary" data-ticker="MYX:KGB" data-company="Kelington Group Bhd." aria-label="Open decision calendar">Set decision</button>
+        </td>
+        <td>
+          <a class="stock-link" href="https://www.klsescreener.com/v2/charting/chart/0151" data-klse-url="https://www.klsescreener.com/v2/charting/chart/0151" data-tv-url="https://www.tradingview.com/chart/?symbol=MYX%3AKGB" target="_blank" rel="noopener">Kelington Group Bhd.</a>
+          <div class="sources-line">#114 by volume</div>
+        </td>
+      </tr>
+      <tr class="row" data-ticker="MYX:MEGAFB" data-search="megafb mega fortris berhad">
+        <td class="check-cell"><input type="checkbox" class="review" data-ticker="MYX:MEGAFB"></td>
+        <td class="note-cell"><button type="button" class="note-btn" data-ticker="MYX:MEGAFB" title="Add note" aria-label="Add note"><span class="note-icon">&#9998;</span><span class="note-dot"></span></button></td>
+        <td class="decision-cell">
+          <button type="button" class="decision-summary" data-ticker="MYX:MEGAFB" data-company="Mega Fortris Berhad" aria-label="Open decision calendar">Set decision</button>
+        </td>
+        <td>
+          <a class="stock-link" href="https://www.klsescreener.com/v2/charting/chart/5327" data-klse-url="https://www.klsescreener.com/v2/charting/chart/5327" data-tv-url="https://www.tradingview.com/chart/?symbol=MYX%3AMEGAFB" target="_blank" rel="noopener">Mega Fortris Berhad</a>
+          <div class="sources-line">#77 by volume</div>
+        </td>
+      </tr>
+      <tr class="row" data-ticker="MYX:MI" data-search="mi mi technovation bhd.">
+        <td class="check-cell"><input type="checkbox" class="review" data-ticker="MYX:MI"></td>
+        <td class="note-cell"><button type="button" class="note-btn" data-ticker="MYX:MI" title="Add note" aria-label="Add note"><span class="note-icon">&#9998;</span><span class="note-dot"></span></button></td>
+        <td class="decision-cell">
+          <button type="button" class="decision-summary" data-ticker="MYX:MI" data-company="Mi Technovation Bhd." aria-label="Open decision calendar">Set decision</button>
+        </td>
+        <td>
+          <a class="stock-link" href="https://www.klsescreener.com/v2/charting/chart/5286" data-klse-url="https://www.klsescreener.com/v2/charting/chart/5286" data-tv-url="https://www.tradingview.com/chart/?symbol=MYX%3AMI" target="_blank" rel="noopener">Mi Technovation Bhd.</a>
+          <div class="sources-line">#63 by volume</div>
+        </td>
+      </tr>
+      <tr class="row" data-ticker="MYX:PWRWELL" data-search="pwrwell powerwell holdings bhd.">
+        <td class="check-cell"><input type="checkbox" class="review" data-ticker="MYX:PWRWELL"></td>
+        <td class="note-cell"><button type="button" class="note-btn" data-ticker="MYX:PWRWELL" title="Add note" aria-label="Add note"><span class="note-icon">&#9998;</span><span class="note-dot"></span></button></td>
+        <td class="decision-cell">
+          <button type="button" class="decision-summary" data-ticker="MYX:PWRWELL" data-company="Powerwell Holdings Bhd." aria-label="Open decision calendar">Set decision</button>
+        </td>
+        <td>
+          <a class="stock-link" href="https://www.klsescreener.com/v2/charting/chart/0217" data-klse-url="https://www.klsescreener.com/v2/charting/chart/0217" data-tv-url="https://www.tradingview.com/chart/?symbol=MYX%3APWRWELL" target="_blank" rel="noopener">Powerwell Holdings Bhd.</a>
+          <div class="sources-line">#30 by volume</div>
+        </td>
+      </tr>
+      <tr class="row" data-ticker="MYX:WESTRVR" data-search="westrvr west river bhd.">
+        <td class="check-cell"><input type="checkbox" class="review" data-ticker="MYX:WESTRVR"></td>
+        <td class="note-cell"><button type="button" class="note-btn" data-ticker="MYX:WESTRVR" title="Add note" aria-label="Add note"><span class="note-icon">&#9998;</span><span class="note-dot"></span></button></td>
+        <td class="decision-cell">
+          <button type="button" class="decision-summary" data-ticker="MYX:WESTRVR" data-company="West River Bhd." aria-label="Open decision calendar">Set decision</button>
+        </td>
+        <td>
+          <a class="stock-link" href="https://www.klsescreener.com/v2/charting/chart/0353" data-klse-url="https://www.klsescreener.com/v2/charting/chart/0353" data-tv-url="https://www.tradingview.com/chart/?symbol=MYX%3AWESTRVR" target="_blank" rel="noopener">West River Bhd.</a>
+          <div class="sources-line">#94 by volume</div>
+        </td>
+      </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="noteOverlay">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="noteModalTitle">
+      <h2 id="noteModalTitle">Note &mdash; <span id="noteModalTicker"></span></h2>
+      <textarea id="noteText" class="note-textarea" rows="5" placeholder="Add a note for this stock&hellip;"></textarea>
+      <div class="modal-actions">
+        <button type="button" class="bulk-btn" id="noteCancelBtn">Cancel</button>
+        <button type="button" class="bulk-btn primary" id="noteSaveBtn">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="decisionOverlay">
+    <div class="modal calendar-modal" role="dialog" aria-modal="true" aria-labelledby="decisionModalTitle">
+      <h2 id="decisionModalTitle"><span id="decisionModalTicker"></span></h2>
+      <p class="calendar-help">Select a date and one decision. Changes apply only after Save.</p>
+      <div class="calendar-nav">
+        <button type="button" class="calendar-nav-btn" id="calendarPrevBtn" aria-label="Previous month">&lsaquo;</button>
+        <span class="calendar-month" id="calendarMonth"></span>
+        <button type="button" class="calendar-nav-btn" id="calendarNextBtn" aria-label="Next month">&rsaquo;</button>
+      </div>
+      <div class="calendar-weekdays" aria-hidden="true">
+        <span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span><span>Sun</span>
+      </div>
+      <div class="calendar-grid" id="calendarGrid"></div>
+      <div class="decision-editor">
+        <p class="selected-date" id="selectedDecisionDate">Select a date</p>
+        <div class="status-options" role="radiogroup" aria-label="Decision">
+          <label class="status-option buy"><input type="radio" name="decisionStatus" value="buy" disabled><span>Buy</span></label>
+          <label class="status-option watch"><input type="radio" name="decisionStatus" value="watch" disabled><span>Watch</span></label>
+          <label class="status-option ignore"><input type="radio" name="decisionStatus" value="ignore" disabled><span>Ignore</span></label>
+        </div>
+        <p class="calendar-status" id="calendarStatus">No unsaved changes.</p>
+      </div>
+      <div class="modal-actions">
+        <div class="destructive-actions">
+          <button type="button" class="bulk-btn delete-btn" id="decisionDeleteBtn" hidden>Delete entry</button>
+          <button type="button" class="bulk-btn delete-btn" id="decisionClearAllBtn" hidden>Clear all</button>
+        </div>
+        <button type="button" class="bulk-btn" id="decisionCancelBtn">Cancel</button>
+        <button type="button" class="bulk-btn primary" id="decisionSaveBtn" disabled>Save</button>
+      </div>
+    </div>
+  </div>
+  <script>
+    // Theme toggle: cycles System -> Light -> Dark -> System. "System" means no
+    // data-theme attribute at all, so prefers-color-scheme (and any browser
+    // extension that flips it) decides. Light/Dark pin an explicit choice,
+    // persisted so it survives a reload of this file.
+    const THEME_KEY = 'klse_theme';
+    const themeToggle = document.getElementById('themeToggle');
+    const themeCycle = ['system', 'light', 'dark'];
+
+    function applyTheme(mode) {
+      if (mode === 'system') {
+        delete document.documentElement.dataset.theme;
+      } else {
+        document.documentElement.dataset.theme = mode;
+      }
+      themeToggle.textContent = 'Theme: ' + mode[0].toUpperCase() + mode.slice(1);
+    }
+
+    let currentTheme = localStorage.getItem(THEME_KEY) || 'system';
+    applyTheme(currentTheme);
+    themeToggle.addEventListener('click', () => {
+      currentTheme = themeCycle[(themeCycle.indexOf(currentTheme) + 1) % themeCycle.length];
+      localStorage.setItem(THEME_KEY, currentTheme);
+      applyTheme(currentTheme);
+    });
+
+    // Chart-source toggle: KLSEScreener <-> TradingView, persisted so the
+    // choice survives a reload, same pattern as the theme toggle above.
+    const SOURCE_KEY = 'klse_link_source';
+    const sourceToggle = document.getElementById('sourceToggle');
+    const sourceLabels = { klse: 'KLSEScreener', tradingview: 'TradingView' };
+
+    function applySource(source) {
+      document.querySelectorAll('a.stock-link').forEach(a => {
+        a.href = source === 'tradingview' ? a.dataset.tvUrl : a.dataset.klseUrl;
+      });
+      sourceToggle.textContent = 'Chart: ' + sourceLabels[source];
+    }
+
+    let currentSource = localStorage.getItem(SOURCE_KEY) || 'klse';
+    applySource(currentSource);
+    sourceToggle.addEventListener('click', () => {
+      currentSource = currentSource === 'klse' ? 'tradingview' : 'klse';
+      localStorage.setItem(SOURCE_KEY, currentSource);
+      applySource(currentSource);
+    });
+
+    const tbody = document.getElementById('tbody');
+    const search = document.getElementById('search');
+    const counter = document.getElementById('counter');
+
+    function rows() {
+      return Array.from(tbody.querySelectorAll('tr.row'));
+    }
+
+    function keyFor(cb) { return 'klse_check_' + cb.dataset.ticker; }
+
+    function updateCounter() {
+      const boxes = Array.from(document.querySelectorAll('input.review'));
+      const checked = boxes.filter(cb => cb.checked).length;
+      counter.textContent = checked + ' / ' + boxes.length + ' reviewed';
+    }
+
+    function applyFilters() {
+      const term = search.value.trim().toLowerCase();
+      rows().forEach(row => {
+        const show = !term || row.dataset.search.includes(term);
+        row.classList.toggle('hidden-row', !show);
+      });
+      updateCounter();
+    }
+
+    search.addEventListener('input', applyFilters);
+
+    function setChecked(cb, checked) {
+      cb.checked = checked;
+      localStorage.setItem(keyFor(cb), checked ? '1' : '0');
+      cb.closest('tr').classList.toggle('checked', checked);
+    }
+
+    document.querySelectorAll('input.review').forEach(cb => {
+      if (localStorage.getItem(keyFor(cb)) === '1') {
+        cb.checked = true;
+        cb.closest('tr').classList.add('checked');
+      }
+      cb.addEventListener('change', () => {
+        setChecked(cb, cb.checked);
+        updateCounter();
+      });
+    });
+
+    function bulkSetVisible(checked) {
+      rows().forEach(row => {
+        if (row.classList.contains('hidden-row')) return;
+        const cb = row.querySelector('input.review');
+        if (cb) setChecked(cb, checked);
+      });
+      updateCounter();
+    }
+    document.getElementById('selectAllBtn').addEventListener('click', () => bulkSetVisible(true));
+    document.getElementById('deselectAllBtn').addEventListener('click', () => bulkSetVisible(false));
+
+    // Decision history: each date has exactly one Buy, Watch or Ignore value.
+    // Editing happens in a draft and localStorage changes only after Save.
+    const HISTORY_PREFIX = 'klse_decision_history_';
+    const decisionLabels = { buy: 'Buy', watch: 'Watch', ignore: 'Ignore' };
+    const validDecisions = new Set(Object.keys(decisionLabels));
+
+    function historyKeyFor(ticker) { return HISTORY_PREFIX + ticker; }
+
+    function loadHistory(ticker) {
+      try {
+        const saved = JSON.parse(localStorage.getItem(historyKeyFor(ticker)) || '{}');
+        if (!saved || typeof saved !== 'object' || Array.isArray(saved)) return {};
+        return Object.fromEntries(Object.entries(saved).filter(
+          ([date, decision]) => /^\d{4}-\d{2}-\d{2}$/.test(date) && validDecisions.has(decision)
+        ));
+      } catch (e) {
+        return {};
+      }
+    }
+
+    function saveHistory(ticker, history) {
+      if (Object.keys(history).length) {
+        localStorage.setItem(historyKeyFor(ticker), JSON.stringify(history));
+      } else {
+        localStorage.removeItem(historyKeyFor(ticker));
+      }
+    }
+
+    function localDateStamp(date = new Date()) {
+      const year = String(date.getFullYear());
+      const month = String(date.getMonth() + 1).padStart(2, '0');
+      const day = String(date.getDate()).padStart(2, '0');
+      return year + '-' + month + '-' + day;
+    }
+
+    function shortDate(stamp) {
+      const parts = stamp.split('-');
+      return parts.length === 3 ? parts[2] + '/' + parts[1] : stamp;
+    }
+
+    function dateFromStamp(stamp) {
+      const [year, month, day] = stamp.split('-').map(Number);
+      return new Date(year, month - 1, day);
+    }
+
+    function longDate(stamp) {
+      return dateFromStamp(stamp).toLocaleDateString(undefined, {
+        weekday: 'short', year: 'numeric', month: 'short', day: 'numeric'
+      });
+    }
+
+    function normalizedHistory(history) {
+      return JSON.stringify(Object.keys(history).sort().map(date => [date, history[date]]));
+    }
+
+    function refreshDecisionSummary(btn) {
+      const history = loadHistory(btn.dataset.ticker);
+      const dates = Object.keys(history).sort();
+      const latestDate = dates.length ? dates[dates.length - 1] : '';
+      const latestDecision = latestDate ? history[latestDate] : '';
+      btn.classList.remove('active', 'buy', 'watch', 'ignore');
+      if (latestDecision) {
+        btn.classList.add('active', latestDecision);
+        btn.textContent = decisionLabels[latestDecision] + ' ' + shortDate(latestDate);
+        btn.title = 'Latest decision: ' + decisionLabels[latestDecision] + ' on ' + latestDate
+          + '. Click to open full history.';
+        btn.setAttribute('aria-label', 'Open decision calendar. Latest decision: '
+          + decisionLabels[latestDecision] + ' on ' + latestDate);
+      } else {
+        btn.textContent = 'Set decision';
+        btn.title = 'Open decision calendar';
+        btn.setAttribute('aria-label', 'Open decision calendar. No decision set.');
+      }
+      btn.closest('tr').classList.toggle('ignored', latestDecision === 'ignore');
+    }
+
+    document.querySelectorAll('.decision-summary').forEach(refreshDecisionSummary);
+
+    const decisionOverlay = document.getElementById('decisionOverlay');
+    const decisionModalTicker = document.getElementById('decisionModalTicker');
+    const calendarMonthLabel = document.getElementById('calendarMonth');
+    const calendarGrid = document.getElementById('calendarGrid');
+    const selectedDecisionDateLabel = document.getElementById('selectedDecisionDate');
+    const calendarStatus = document.getElementById('calendarStatus');
+    const decisionSaveBtn = document.getElementById('decisionSaveBtn');
+    const decisionDeleteBtn = document.getElementById('decisionDeleteBtn');
+    const decisionClearAllBtn = document.getElementById('decisionClearAllBtn');
+    const decisionStatusInputs = Array.from(document.querySelectorAll('input[name="decisionStatus"]'));
+    let activeDecisionBtn = null;
+    let savedHistory = {};
+    let draftHistory = {};
+    let selectedDecisionDate = '';
+    let calendarView = new Date();
+
+    function hasUnsavedDecisionChanges() {
+      return normalizedHistory(savedHistory) !== normalizedHistory(draftHistory);
+    }
+
+    function renderDecisionEditor() {
+      const selectedValue = selectedDecisionDate ? draftHistory[selectedDecisionDate] || '' : '';
+      selectedDecisionDateLabel.textContent = selectedDecisionDate
+        ? longDate(selectedDecisionDate)
+        : 'Select a date';
+      decisionStatusInputs.forEach(input => {
+        input.disabled = !selectedDecisionDate;
+        input.checked = input.value === selectedValue;
+      });
+      decisionDeleteBtn.hidden = !selectedValue;
+      decisionClearAllBtn.hidden = Object.keys(draftHistory).length === 0;
+      const changed = hasUnsavedDecisionChanges();
+      decisionSaveBtn.disabled = !changed;
+      calendarStatus.textContent = changed
+        ? 'Unsaved changes - press Save to apply.'
+        : 'No unsaved changes.';
+    }
+
+    function selectDecisionDate(stamp) {
+      if (stamp === selectedDecisionDate && draftHistory[stamp]) {
+        delete draftHistory[stamp];
+        renderCalendar();
+        renderDecisionEditor();
+        return;
+      }
+      selectedDecisionDate = stamp;
+      renderCalendar();
+      renderDecisionEditor();
+    }
+
+    function renderCalendar() {
+      const year = calendarView.getFullYear();
+      const month = calendarView.getMonth();
+      const firstDay = new Date(year, month, 1);
+      const mondayOffset = (firstDay.getDay() + 6) % 7;
+      const daysInMonth = new Date(year, month + 1, 0).getDate();
+      const today = localDateStamp();
+      calendarMonthLabel.textContent = firstDay.toLocaleDateString(undefined, {
+        month: 'long', year: 'numeric'
+      });
+      calendarGrid.replaceChildren();
+
+      for (let cell = 0; cell < mondayOffset; cell += 1) {
+        const blank = document.createElement('span');
+        blank.className = 'calendar-blank';
+        calendarGrid.appendChild(blank);
+      }
+
+      for (let day = 1; day <= daysInMonth; day += 1) {
+        const date = new Date(year, month, day);
+        const stamp = localDateStamp(date);
+        const decision = draftHistory[stamp] || '';
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'calendar-day';
+        btn.textContent = String(day);
+        btn.dataset.date = stamp;
+        btn.setAttribute('aria-label', longDate(stamp)
+          + (decision ? ', ' + decisionLabels[decision] : ', no decision'));
+        if (decision) btn.classList.add(decision);
+        if (stamp === today) btn.classList.add('today');
+        if (stamp === selectedDecisionDate) btn.classList.add('selected');
+        btn.addEventListener('click', () => selectDecisionDate(stamp));
+        calendarGrid.appendChild(btn);
+      }
+    }
+
+    function openDecisionModal(btn) {
+      activeDecisionBtn = btn;
+      savedHistory = loadHistory(btn.dataset.ticker);
+      draftHistory = {...savedHistory};
+      calendarView = new Date();
+      selectedDecisionDate = '';
+      decisionModalTicker.textContent = btn.dataset.ticker + ' — ' + btn.dataset.company;
+      renderCalendar();
+      renderDecisionEditor();
+      decisionOverlay.classList.add('open');
+    }
+
+    function closeDecisionModal() {
+      decisionOverlay.classList.remove('open');
+      activeDecisionBtn = null;
+      savedHistory = {};
+      draftHistory = {};
+      selectedDecisionDate = '';
+    }
+
+    function saveDecisionHistory() {
+      if (!activeDecisionBtn || !hasUnsavedDecisionChanges()) return;
+      saveHistory(activeDecisionBtn.dataset.ticker, draftHistory);
+      refreshDecisionSummary(activeDecisionBtn);
+      closeDecisionModal();
+    }
+
+    document.querySelectorAll('.decision-summary').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        openDecisionModal(btn);
+      });
+    });
+
+    decisionStatusInputs.forEach(input => {
+      input.addEventListener('change', () => {
+        if (!selectedDecisionDate || !input.checked) return;
+        draftHistory[selectedDecisionDate] = input.value;
+        renderCalendar();
+        renderDecisionEditor();
+      });
+    });
+
+    document.getElementById('calendarPrevBtn').addEventListener('click', () => {
+      calendarView = new Date(calendarView.getFullYear(), calendarView.getMonth() - 1, 1);
+      selectedDecisionDate = '';
+      renderCalendar();
+      renderDecisionEditor();
+    });
+    document.getElementById('calendarNextBtn').addEventListener('click', () => {
+      calendarView = new Date(calendarView.getFullYear(), calendarView.getMonth() + 1, 1);
+      selectedDecisionDate = '';
+      renderCalendar();
+      renderDecisionEditor();
+    });
+    decisionDeleteBtn.addEventListener('click', () => {
+      if (!selectedDecisionDate || !draftHistory[selectedDecisionDate]) return;
+      delete draftHistory[selectedDecisionDate];
+      renderCalendar();
+      renderDecisionEditor();
+    });
+    decisionClearAllBtn.addEventListener('click', () => {
+      draftHistory = {};
+      selectedDecisionDate = '';
+      renderCalendar();
+      renderDecisionEditor();
+    });
+    decisionSaveBtn.addEventListener('click', saveDecisionHistory);
+    document.getElementById('decisionCancelBtn').addEventListener('click', closeDecisionModal);
+    decisionOverlay.addEventListener('click', (e) => {
+      if (e.target === decisionOverlay) closeDecisionModal();
+    });
+
+    // Per-stock notes: stored in localStorage per ticker, edited via a popup
+    // modal (opened from the pencil icon next to each row's checkbox).
+    function noteKeyFor(ticker) { return 'klse_note_' + ticker; }
+
+    function refreshNoteDot(btn) {
+      const note = localStorage.getItem(noteKeyFor(btn.dataset.ticker));
+      btn.classList.toggle('has-note', !!note);
+    }
+
+    document.querySelectorAll('.note-btn').forEach(refreshNoteDot);
+
+    const noteOverlay = document.getElementById('noteOverlay');
+    const noteModalTicker = document.getElementById('noteModalTicker');
+    const noteText = document.getElementById('noteText');
+    let activeNoteBtn = null;
+
+    function openNoteModal(btn) {
+      activeNoteBtn = btn;
+      noteModalTicker.textContent = btn.dataset.ticker;
+      noteText.value = localStorage.getItem(noteKeyFor(btn.dataset.ticker)) || '';
+      noteOverlay.classList.add('open');
+      noteText.focus();
+    }
+
+    function closeNoteModal() {
+      noteOverlay.classList.remove('open');
+      activeNoteBtn = null;
+    }
+
+    function saveNote() {
+      if (!activeNoteBtn) return;
+      const key = noteKeyFor(activeNoteBtn.dataset.ticker);
+      const value = noteText.value.trim();
+      if (value) {
+        localStorage.setItem(key, value);
+      } else {
+        localStorage.removeItem(key);
+      }
+      refreshNoteDot(activeNoteBtn);
+      closeNoteModal();
+    }
+
+    document.querySelectorAll('.note-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        openNoteModal(btn);
+      });
+    });
+
+    document.getElementById('noteSaveBtn').addEventListener('click', saveNote);
+    document.getElementById('noteCancelBtn').addEventListener('click', closeNoteModal);
+    noteOverlay.addEventListener('click', (e) => {
+      if (e.target === noteOverlay) closeNoteModal();
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && noteOverlay.classList.contains('open')) closeNoteModal();
+      if (e.key === 'Escape' && decisionOverlay.classList.contains('open')) closeDecisionModal();
+    });
+
+    updateCounter();
+  </script>
+</body>
+</html>
